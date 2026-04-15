@@ -50,9 +50,9 @@ WebGPU Dashboard: A React-based visualization engine utilizing the WebGPU API fo
 
 The development pipeline is segmented into five core stages:
 
-[x] Task 0: Virtual Environment & Dependency Management.
+[v] Task 0: Virtual Environment & Dependency Management.
 
-[x] Task 1 & 2: Raw Data Acquisition (OMNIWeb/SPENVIS), cleaning, and SAA Heatmap generation.
+[v] Task 1 & 2: Raw Data Acquisition (OMNIWeb/SPENVIS), cleaning, and SAA Heatmap generation.
 
 [ ] Task 3: C++ Physics Core implementation (RK4, NRLMSISE-00, and Analytical Shadowing).
 
