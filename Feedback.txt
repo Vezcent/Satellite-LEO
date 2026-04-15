@@ -1,0 +1,36 @@
+1. FDIR still hard-coded
+ problem: SoC < 15% → force safe mode, It is a static rule
+There is no obvious state machine
+should update to Modes:
+- NOMINAL
+- DEGRADED
+- SAFE
+- RECOVERY
+And have transition:
+IF SoC < 20% → DEGRADED
+IF SoC < 10% → SAFE
+IF recovered → RECOVERY → NOMINAL
+2. Reward vs FDIR maybe conflict
+we have: Reward penalize failure strongly
+But FDIR can block action
+Agent will:
+not learning the real consequences
+or learn “overridden” behavior
+Way to fix:
+add reward for “FDIR intervention”
+or expose FDIR state into observation
+3. Lack of time delay in decision loop
+We have delay telemetry but:
+agent still acts instantly (0 latency)
+in real life:
+decision delay ≠ telemetry delay
+Should add:
+action execution delay (queue)
+stale state decision
+4. There is no uncertainty in model itself yet.
+We already have noise input, but not yet:
+error in the physics model
+drift over time
+next step to:
+Avoid overfitting the simulator
+    

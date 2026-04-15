@@ -1,26 +1,26 @@
 
 # IMPLEMENTATION PIPELINE: MULTI-AGENT SYSTEM FOR SATELLITE LIFETIME OPTIMIZATION (S-MAS)
 
-## 0. CREATE VENV, THIS IS VERY IMPORTANT
+## 0. ACTIVATE .VENV, THIS IS VERY IMPORTANT
 
 ### 1. System Overview
 
-The objective is to develop an autonomous satellite simulation and control system utilizing Multi-Agent Reinforcement Learning (MARL). The system integrates high-fidelity physical computations (C++/C/C#) with flexible AI training environments (Python) and real-time 3D visualization (WebGPU).
+The objective is to develop a High-Fidelity Satellite Operational Twin utilizing Multi-Agent Reinforcement Learning (MARL). The system integrates physical computations (C++/C/C#) with flexible AI training environments (Python) and real-time 3D visualization (WebGPU).
 
-Core Paradigm: The primary focus is Heterogeneous Subsystem Control for a single satellite, where the "Multi-Agent" aspect refers to internal subsystems (Navigation, Resource, Mission) negotiating survival. Swarm scaling (10,000 agents) is an optional stress-test utilizing Shared Policies and Batch Inference.
-Global Physics Clock: The system strictly adheres to a global integration time step of dt = 5.0 seconds to ensure mathematical consistency across all C++ physics solvers and Python reward evaluations.
+* **Core Paradigm:** The primary focus is **Hybrid AI + Rule-based Control**. Internal subsystems (Navigation, Resource, Mission) utilize MARL to negotiate survival, but their actions are filtered through an FDIR (Failure Detection, Isolation, and Recovery) State Machine to ensure operational safety.
+* **Global Physics Clock:** The system strictly adheres to a global integration time step of dt = 5.0 seconds.
 
 #### 2. Data Pipeline (Tasks 1 & 2)
 
-Goal: Collect 15-20 years of environmental data (2000–2020) while maintaining a storage footprint of < 50GB.
+Goal: Collect 15-20 years of environmental data (2000–2020) while maintaining a storage footprint of < 50MB.
 
 #### 2.1. Data Reduction & Optimization
 
-Strategy: To maintain a high-fidelity simulation within a $\leq 50 \text{ GB}$ storage constraint for a 15-year dataset, the following multi-layered reduction strategies are applied, specifically localized to the South Atlantic Anomaly (SAA) region ($0^\circ \text{ to } 50^\circ\text{S}$, $90^\circ\text{W} \text{ to } 40^\circ\text{E}$).
+Strategy: To maintain a high-fidelity simulation within a $\leq 50 \text{MB}$ storage constraint for a 15-year dataset, the following multi-layered reduction strategies are applied, specifically localized to the South Atlantic Anomaly (SAA) region ($0^\circ \text{ to } 50^\circ\text{S}$, $90^\circ\text{W} \text{ to } 40^\circ\text{E}$).
 
 #### 2.1.1. Atmospheric Dynamics: Space Weather Driven Models (NRLMSISE-00)
 
-Instead of relying on tropospheric/stratospheric models like ERA5, the simulation utilizes the NRLMSISE-00 empirical atmospheric model, natively integrated into the C++ physics core. This accurately captures thermospheric density variations at LEO altitudes 600km) driven by solar activity.
+Instead of relying on tropospheric/stratospheric models like ERA5, the simulation utilizes the NRLMSISE-00 empirical atmospheric model, natively integrated into the C++ physics core. This accurately captures thermospheric density variations at LEO altitudes (600km) driven by solar activity.
 
     Strategy: Eliminating the need to download massive multi-level atmospheric cubes. Density ($\rho$) is dynamically computed at runtime based on the satellite's exact State Vector (position and time) and historical space weather indices.
 
@@ -56,7 +56,7 @@ This layer is the core of SAA (South Atlantic Anomaly) simulation, focusing on t
 
     Strategy: The system utilizes pre-computed Static Radiation Heatmaps specifically generated for the 600km altitude shell to act as a spatial hazard map for the agents.
 
-    Radiation Focus: 2D grid lookups (Latitude vs. Longitude) for high-energy integral proton fluxes ($>10 \text{ MeV}, >30 \text{ MeV}, which the MAS Agents query based on their current position to trigger defensive states.
+    Radiation Focus: 2D grid lookups (Latitude vs. Longitude) for high-energy integral proton fluxes (>10MeV, >30MeV, which the MAS Agents query based on their current position to trigger defensive states.
 
 #### 2.2. Preprocessing & Feature Engineering
 
@@ -112,32 +112,26 @@ Radiation Resiliency: Triple Modular Redundancy (TMR) OBC, ECC/MRAM non-volatile
 
 ##### 3.1.2 Core Physics & Failure Contract
 
-A. Atmospheric Drag & Orbital Decay:
-    $$F_D = -\frac{1}{2} \rho A C_D v^2$$
-    Calculated using the NRLMSISE-00 model and integrated using an RK4 solver locked at `dt = 5.0s`.
-
-B. Power Dynamics & Thermal Degradation:
-    $$t_{min} = \max(t_{xmin}, t_{ymin}, t_{zmin}), \quad t_{max} = \min(t_{xmax}, t_{ymax}, t_{zmax})$$
-    Arrhenius model calculates the chemical degradation rate:
-    $$k = A \exp\left(-\frac{E_a}{R T}\right)$$
-
-C. Failure Contract (Terminal States):
-    The simulation strictly defines the satellite as "Dead" (Episode Done = True) under three conditions:
-    1. Power Failure: Battery SoC drops to $\le 0\%$.
-    2. Telemetry Loss: Loss of LoS with Ground Stations for $> 72$ continuous hours.
-    3. Re-entry: Altitude drops below $200 \text{ km}$.
+A. **Atmospheric Drag & Orbital Decay:** Calculated using the NRLMSISE-00 model and integrated using an RK4 solver locked at `dt = 5.0s`.
+B. **Power Dynamics & Realistic Degradation:** *Arrhenius model calculates chemical degradation.
+    **[NEW]** Battery capacity actively degrades based on accumulated charge/discharge cycles and thermal stress.
+C. **Stochastic Realism & Uncertainty:**
+    **Sensor Noise & Stale States:** Gaussian noise injected into readings. The telemetry stream exposes intentional latency, forcing the AI to make decisions on "stale" states.
+    **Actuator Latency & Error:** Thruster commands enter an **Action Execution Queue** (simulating 1-3 step delays) and execute with a $\pm 5\%$ physical deviation.
+    **Epistemic Model Drift:** Physical constants (like $C_D$ and solar panel baseline efficiency) undergo a slow, stochastic random walk over the 15-year simulation to prevent simulator overfitting.
+    **Anomalies:** Random SEU spikes triggered probabilistically during SAA transit.
+D. **Failure Contract (Terminal States):** Battery $SoC \le 0\%$, Telemetry Loss $> 72h$, or Altitude $< 200 \text{ km}$.
 
 PHASE 2: CUSTOM MAS (User Deployment & Agent Roles)
 
-    Heterogeneous agents coordinate to manage survival subsystems. To support swarm scaling, agents use a Shared Policy Architecture and Batch Inference.
+    Heterogeneous agents coordinate to manage survival subsystems.
+    While the framework is designed for users to implement their own algorithms, 
+    the system provides a default baseline utilizing the **MAPPO** algorithm.
 
 ##### 3.2.1 Agent Roles & Action Contracts
 
-Navigation Agent (The Pilot): Computes $\Delta V$ thruster burns.
-    Action Contract: Continuous 3D Vector $[-1.0, 1.0]$ for attitude/throttle.
-
-Resource Agent (The Bus Manager): Controls the "Deep Sleep" toggle.
-    Action Contract: Discrete/Binary $[0, 1]$ evaluated via an Argmax/Sigmoid threshold ($>0.5$).
+* **Navigation Agent (The Pilot):** Computes $\Delta V$ thruster burns. Contract: Continuous 3D Vector [-1.0, 1.0] for Attitude, and 1D Vector [0.0, 1.0] for Throttle.
+* **Resource Agent (The Bus Manager):** Controls the "Deep Sleep" toggle. Contract: Discrete `[0, 1]`.
 
 ##### 3.2.2 Explicit Reward Shaping
 
@@ -149,13 +143,12 @@ To prevent "Reward Hacking", the baseline survival reward utilizes explicit weig
 
 PHASE 3: CUSTOM MISSION (Optional Opportunistic Coverage)
 
-    The mission layer is an opt-in behavioral layer.
+    The mission layer is an opt-in behavioral layer. The default provided mission is Image/Data Collection.
 
 ##### 3.3.1 Mission Execution Logic
 
-    Mission Agent: Decides when to toggle the optical payload (CHRIS instrument) ON or OFF.
-    
-    Action Contract: Discrete/Binary $[0, 1]$.
+* **Mission Agent:** Decides when to toggle the optical payload (CHRIS instrument). Action Contract: Discrete `[0, 1]`.
+* **Hardware Constraint:** When Action is 1 (ON), an explicit power draw penalty accelerates battery discharge.
 
 ##### 3.3.2 Dynamic Reward Shaping for Phase 3
 
@@ -165,9 +158,20 @@ PHASE 3: CUSTOM MISSION (Optional Opportunistic Coverage)
 
     Explicit Weights: $r_{coverage} = +50.0$ (Valid Target Imaged), $P_{fatal\_risk} = -500.0$ (Payload ON inside SAA boundaries).
 
-##### 3.3.3 Custom Algorithm Interface (custom_algorithm.py)
+##### 3.3.3 FDIR & Hybrid Control (The Safety Governor)
 
-    This file coordinates Phase 2 and 3 using vectorized operations to support scaling from 1 to 10,000 agents seamlessly.
+* **Rule-Based Override:** Before AI actions are sent to the C++ actuator, the FDIR State Machine validates them against hardware limits.
+* **Intervention:** If safety thresholds are breached (e.g., $SoC < 15\%$, or a fatal SEU spike is detected via noisy sensors), the Governor overrides the AI's intent, forces the payload OFF, disables thrusters, and shifts the system into `Safe-Mode`.
+* **Dynamic State Machine:** The Governor evaluates the C++ physics state and transitions between 4 strict modes:
+* **NOMINAL:** SoC $> 20\%$. AI has full control.
+* **DEGRADED:** SoC $< 20\%$. AI control is restricted (e.g., payload forced OFF, thrust capped).
+* **SAFE:** SoC $< 10\%$. AI is completely overridden. System enforces Deep Sleep and sun-pointing.
+* **RECOVERY:** Triggered when SoC climbs back above threshold safely. Transitions back to NOMINAL.
+* **Observation & Penalty:** The active FDIR state is explicitly passed into the MARL Observation Space. If the FDIR is forced to intervene (shifting from NOMINAL to DEGRADED/SAFE), a sharp reward penalty is applied to teach the AI the real consequences of its actions.
+
+##### 3.3.4 Custom Algorithm Interface (custom_algorithm.py)
+
+    This file coordinates Phase 2 and 3 using vectorized operations to support scaling from 1 to 1111 agents seamlessly.
 
 sample:
 
@@ -180,7 +184,7 @@ class SatelliteMARLController:
     """
     Optimized for Shared Policy and Batch Inference (evaluating thousands of agents simultaneously).
     """
-    def __init__(self, config=None):
+    def **init**(self, config=None):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.agents = {
             "nav": self._build_agent("navigation"),  # Phase 2: Manages Thrust
@@ -240,15 +244,17 @@ This final stage realizes the Decentralized Execution phase.
 
 C++ Inference Engine: The ONNX Runtime C++ API executes the AI policies. To maximize GPU utilization, C# packs agent states into a single 2D Tensor `[batch_size, state_dim]` for Batch Inference.
 
-###### 4.2. Telemetry, Logging & WebSocket Server
+###### 4.2. Telemetry, Ops Simulation & WebSocket Server
 
-To support Mission-Critical telemetry and Offline RL Debugging:
-    Binary Packet Schema: Uses a strict `[Header(Version) | Payload | Checksum]` byte array to eliminate JSON parsing overhead.
-    Backpressure & Culling: The server implements a 'Drop Stale Frames' strategy. If the client lags, old frames are dropped to prevent server Out-of-Memory (OOM) crashes.
-    Logging & Replay: States and ONNX decisions are dumped to high-performance log files (e.g., Parquet). An Offline Replay Mode allows streaming these logs directly to the frontend bypassing physics calculations.
+To support Mission-Critical telemetry, realistic ground-station operations, and Offline RL Debugging:
+
+* **Binary Packet Schema:** Uses a strict `[Header(Version) | Payload | Checksum]` byte array to eliminate JSON parsing overhead and minimize bandwidth.
+* **Network Impairment Simulation (Ops Sim):** The server utilizes a Circular Buffer to inject stochastic 1-10s communication delays and random packet drops. This forces the ground-station dashboard to deal with stale data and accurately simulates Loss of Signal (LoS) conditions.
+* **Backpressure & Culling:** The server implements a 'Drop Stale Frames' strategy. If the client (dashboard) lags, old frames are dropped to prevent server Out-of-Memory (OOM) crashes.
+* **Logging, FDIR & Replay:** States, ONNX decisions, and **FDIR Governor Interventions** (e.g., forced Safe-Mode triggers) are dumped to high-performance log files (e.g., Parquet). An Offline Replay Mode allows streaming these logs directly to the frontend, bypassing physics calculations for post-mission analysis.
 
 ###### 4.3. WebGPU Dashboard & Resource Lifecycle
 
-Frontend Architecture: A React-based web dashboard utilizing the WebGPU API for Instanced Rendering (up to 10,000 agents in a single draw call).
+Frontend Architecture: A React-based web dashboard utilizing the WebGPU API for Instanced Rendering (up to 1111 agents in a single draw call).
 Resource Lifecycle Management (Critical): To prevent VRAM memory leaks, the architecture guarantees that every `GPUBuffer` and `GPUTexture` invokes its `.destroy()` method upon React component unmounting.
 State-Driven Rendering: Colors dynamically reflect the State Contract: Blue (Nominal)
