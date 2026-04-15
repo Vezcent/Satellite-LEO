@@ -1,52 +1,61 @@
 # Multi-Agent System for Satellite Lifetime Optimization (S-MAS)
 
-## Project Overview
+Project Overview
 
-The S-MAS project focuses on developing an autonomous satellite simulation and control system using Multi-Agent Reinforcement Learning (MARL). Designed to simulate a 15-year extended operation of the VNREDSat-1 (and custom satellites) within the harsh South Atlantic Anomaly (SAA) environment, the system incorporates a hybrid architecture (C++/C/C# and Python) to balance high-performance physics computation with flexible AI training.
+The S-MAS project focuses on developing an autonomous satellite simulation and control system utilizing Multi-Agent Reinforcement Learning (MARL). The system is specifically engineered to simulate the lifecycle of the ESA PROBA-1 micro-satellite at a 600km LEO altitude.
 
-## 1. Data Pipeline & Optimization
+The core objective is to optimize satellite longevity and mission efficiency within the harsh South Atlantic Anomaly (SAA) environment by balancing high-fidelity C++ physical computations with decentralized AI decision-making.
 
-A highly optimized, sub-50GB data pipeline provides real-time multi-dimensional environmental inputs:
+## 1. Optimized Data Pipeline
 
-- **Atmospheric Layer (ERA5):** High-altitude pressure/temperature subsets (6-hourly).
-- **Energy/Thermal Layer (NASA POWER):** Localized irradiance coordinates for ground stations and nodes.
-- **Topographical Layer (SRTM):** 90m and 30m targeted tiles around ground stations.
-- **Space Weather (NOAA SWPC / OMNI):** Proton flux and geomagnetic indices (Kp, Dst) to determine
-Single Event Upset (SEU) rates.
-Data is aligned temporarily, compressed to NetCDF4, and scaled using FP16/quantization techniques to fit within VRAM constraints.
+The system utilizes a multi-layered environmental dataset (2000–2020) optimized for a footprint of < 50MB while maintaining a strict 5.0s temporal resolution:
+
+Atmospheric Layer (NRLMSISE-00): Native C++ integration of the empirical thermospheric model, using F10.7 solar flux and Ap/Kp indices from NASA OMNIWeb to compute real-time density ($\rho$).
+
+Radiation Hazard Map (SPENVIS): Pre-computed 2D Static Heatmaps ($10890$ points) based on the AP-8 MAX model, providing integral proton fluxes for >10 MeV and >30 MeV energy levels.
+
+Energy & Thermal Layer: Analytical Ray-Tracing using a Cylindrical Shadow Model to calculate Beta angles and eclipse durations without external API reliance.Communication Constraints: Geometric Line-of-Sight (LoS) calculations based on Spherical Trigonometry and a $5^\circ$ elevation mask for ESA ground stations (Redu and Kiruna).
 
 ## 2. Satellite Engine & Physics Models (Inspired from Unreal Engine)
 
-Developed with a C++ physics core and C# UI, the engine models critical components and physical perturbations:
+Developed as a high-performance shared library (C++/C) integrated with a C# orchestration layer:
 
-- **Radiation-Hardening & Hardware Specs:** Incorporates TMR, shielding models, error-correcting memory, and smart-discharge battery cycling.
-- **Physics Models:** Realistic orbital decay (aerodynamic drag with ERA5 data), J2 oblateness perturbations, and high-fidelity thermal & radiation-induced component degradation over a 15-year horizon.
-- **Graphics & Ray Tracing:** Uses an optimized Oriented Bounding Box (OBB) ray tracing model for solar incidence and shadowing, with an option to toggle headless training for faster AI execution.
+Platform Specs (PROBA-1): 94 kg launch mass, GaAs solar arrays (~90W), and the CHRIS (Compact High Resolution Imaging Spectrometer) optical payload.
+
+Orbital Dynamics: RK4 integration solver locked at $dt = 5.0s$, modeling aerodynamic drag, orbital decay, and J2 perturbations.Failure Contract: Episodes terminate upon battery depletion ($SoC \le 0\%$), prolonged telemetry loss ($> 72h$), or re-entry ($< 200km$).
+
+Degradation Modeling: Arrhenius-based chemical degradation for batteries and SEU (Single Event Upset) probability mapping for onboard electronics.
 
 ## 3. Multi-Agent Framework (CTDE)
 
 S-MAS utilizes a Centralized Training, Decentralized Execution (CTDE) strategy, managing conflicting subsystem requirements through four specialized sub-agents coordinating within `SatelliteMARLController`:
 
-1. **Space Agent (The Shield):** Predicts radiation doses and triggers safe-mode shutdowns.
-2. **Atmosphere Agent (The Navigator):** Maps drag/density to optimize orbital maneuvers and save fuel.
-3. **Ground Agent (The Communicator):** Detects Line-of-Sight transmission windows amidst terrain/noise constraints.
-4. **Decision Agent (The Strategist):** Aggregates cross-layer inputs to balance mission operations with long-term hardware survival goals.
+Navigation Agent (The Pilot): Manages continuous 3D $\Delta V$ thruster burns to counteract drag and maintain orbit.
+
+Resource Agent (The Bus Manager): Controls discrete power states, toggling "Deep Sleep" to protect the bus during solar storms or high-flux SAA crossings.
+
+Mission Agent (The Payload Manager): Optimizes the CHRIS instrument duty cycle, balancing opportunistic imaging rewards against radiation-induced hardware risk.
 
 The RL agents are trained utilizing potential-based reward shaping to maximize longevity survival and successful mission completions.
 
+Reward Shaping: Explicitly weighted to penalize fuel waste, battery Depth of Discharge (DoD), and SAA-induced fatal upsets while rewarding mission coverage.
+
 ## 4. Export & Deployment
 
-The finalized system is built for real-world embedded operations and monitoring:
+Embedded Inference: AI policies are exported to ONNX (FP16) with dynamic axes, enabling high-speed batch inference via the ONNX Runtime C++ API.
 
-- **Embedded AI:** Agents evaluate decisions onboard using ONNX Runtime (C++) optimized at FP16.
-- **Real-Time Dashboard:** A responsive React and Three.js web application utilizing WebSockets to plot orbital vectors, telemetry, and 3D scenes in the browser directly from the back-end engine.
+WebGPU Dashboard: A React-based visualization engine utilizing the WebGPU API for instanced rendering of satellite swarms (up to 10,000 agents) with real-time binary telemetry streaming.
 
 ## Task Implementation Roadmap
 
 The development pipeline is segmented into five core stages:
 
-- [x] **Task 0:** Virtual Environment Initialization.
-- [ ] **Task 1 & 2:** Raw Data acquisition, geographic limiting, normalization, and optimization.
-- [ ] **Task 3:** Core physics implementation, modeling satellite hardware behavior under degradation, and ray-box math.
-- [ ] **Task 4:** Constructing the Multi-Agent Reinforcement Learning framework with specialized observation layers and decision-conflict resolution.
-- [ ] **Task 5:** Model export to ONNX runtime integration and live WebSocket web-dashboard rendering.
+[x] Task 0: Virtual Environment & Dependency Management.
+
+[x] Task 1 & 2: Raw Data Acquisition (OMNIWeb/SPENVIS), cleaning, and SAA Heatmap generation.
+
+[ ] Task 3: C++ Physics Core implementation (RK4, NRLMSISE-00, and Analytical Shadowing).
+
+[ ] Task 4: MARL Framework construction with specialized Reward Shaping for PROBA-1 subsystems.
+
+[ ] Task 5: ONNX integration and WebGPU real-time dashboard renderi
