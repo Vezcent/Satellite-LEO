@@ -15,7 +15,7 @@ A highly optimized, sub-50GB data pipeline provides real-time multi-dimensional 
 Single Event Upset (SEU) rates.
 Data is aligned temporarily, compressed to NetCDF4, and scaled using FP16/quantization techniques to fit within VRAM constraints.
 
-## 2. Satellite Engine & Physics Models
+## 2. Satellite Engine & Physics Models (Inspired from Unreal Engine)
 
 Developed with a C++ physics core and C# UI, the engine models critical components and physical perturbations:
 

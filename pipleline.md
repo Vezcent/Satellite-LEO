@@ -12,7 +12,7 @@ Global Physics Clock: The system strictly adheres to a global integration time s
 
 #### 2. Data Pipeline (Tasks 1 & 2)
 
-Goal: Collect 20 years of environmental data (2000–2020) while maintaining a storage footprint of < 50GB.
+Goal: Collect 15-20 years of environmental data (2000–2020) while maintaining a storage footprint of < 50GB.
 
 #### 2.1. Data Reduction & Optimization
 
@@ -20,7 +20,7 @@ Strategy: To maintain a high-fidelity simulation within a $\leq 50 \text{ GB}$ s
 
 #### 2.1.1. Atmospheric Dynamics: Space Weather Driven Models (NRLMSISE-00)
 
-Instead of relying on tropospheric/stratospheric models like ERA5, the simulation utilizes the NRLMSISE-00 empirical atmospheric model, natively integrated into the C++ physics core. This accurately captures thermospheric density variations at LEO altitudes (680km) driven by solar activity.
+Instead of relying on tropospheric/stratospheric models like ERA5, the simulation utilizes the NRLMSISE-00 empirical atmospheric model, natively integrated into the C++ physics core. This accurately captures thermospheric density variations at LEO altitudes 600km) driven by solar activity.
 
     Strategy: Eliminating the need to download massive multi-level atmospheric cubes. Density ($\rho$) is dynamically computed at runtime based on the satellite's exact State Vector (position and time) and historical space weather indices.
 
@@ -42,7 +42,7 @@ Given that LEO satellites receive direct solar radiation unattenuated by weather
 
 #### 2.1.3. Communication Constraints: Point-to-Point Line-of-Sight (LoS)
 
-Instead of downloading massive SRTM Topographical Elevation maps for large coastal areas, the model focuses strictly on geometric constraints relevant to a 680km orbit, where Earth's curvature dominates signal blockage.
+Instead of downloading massive SRTM Topographical Elevation maps for large coastal areas, the model focuses strictly on geometric constraints relevant to a 600km orbit, where Earth's curvature dominates signal blockage.
 
     Strategy: Implementing a Spherical Trigonometry-based LoS calculation combined with an Elevation Mask (typically $5^\circ$ to $10^\circ$).
 
@@ -54,9 +54,9 @@ Instead of downloading massive SRTM Topographical Elevation maps for large coast
 
 This layer is the core of SAA (South Atlantic Anomaly) simulation, focusing on the Trapped Proton Flux and Geomagnetic Anomalies that drive hardware failure (Single Event Upsets - SEUs) and solar panel degradation.
 
-    Strategy: The system utilizes pre-computed Static Radiation Heatmaps specifically generated for the 680km altitude shell to act as a spatial hazard map for the agents.
+    Strategy: The system utilizes pre-computed Static Radiation Heatmaps specifically generated for the 600km altitude shell to act as a spatial hazard map for the agents.
 
-    Radiation Focus: 2D grid lookups (Latitude vs. Longitude) for high-energy integral proton fluxes ($>10 \text{ MeV}, >30 \text{ MeV}, \text{ and } >60 \text{ MeV}$), which the MAS Agents query based on their current position to trigger defensive states.
+    Radiation Focus: 2D grid lookups (Latitude vs. Longitude) for high-energy integral proton fluxes ($>10 \text{ MeV}, >30 \text{ MeV}, which the MAS Agents query based on their current position to trigger defensive states.
 
 #### 2.2. Preprocessing & Feature Engineering
 
@@ -98,11 +98,17 @@ PHASE 1: BUILD ENGINE (Simulation Environment & Physics Backend)
 
     This phase acts as the "Ground Truth" generator.
 
-##### 3.1.1 Hardware Constraints: VNREDSat-1 (Customizable Platform)
+##### 3.1.1 Hardware Constraints: PROBA-1 (Autonomous Micro-Satellite Platform)
 
-Basic Specs: 120 kg Launch Mass, Sun-Synchronous Orbit (SSO) at 680 km.
-Power Subsystem: 800 W Solar Array, Lithium-ion battery with Smart Discharge Cycling.
-Radiation Resiliency: Triple Modular Redundancy (TMR) OBC, ECC/MRAM non-volatile storage.
+NORAD Catalog ID: 26957 (Launch Year: 2001).
+
+Basic Specs: 94 kg Launch Mass, Sun-Synchronous Orbit (SSO) at ~600 km. Dimensions: 600 x 600 x 800 mm.
+
+Aerodynamic Area ($A$): ~0.36 m² (Used for Drag calculation $F_D$).
+
+Power Subsystem: Gallium Arsenide (GaAs) Solar Arrays providing ~90W. Lithium-ion battery for Eclipse survival.
+
+Radiation Resiliency: Triple Modular Redundancy (TMR) OBC, ECC/MRAM non-volatile storage to support onboard autonomy.
 
 ##### 3.1.2 Core Physics & Failure Contract
 
@@ -147,7 +153,7 @@ PHASE 3: CUSTOM MISSION (Optional Opportunistic Coverage)
 
 ##### 3.3.1 Mission Execution Logic
 
-    Mission Agent: Decides when to toggle the optical payload (NAOMI camera) ON or OFF.
+    Mission Agent: Decides when to toggle the optical payload (CHRIS instrument) ON or OFF.
     
     Action Contract: Discrete/Binary $[0, 1]$.
 
@@ -245,4 +251,4 @@ To support Mission-Critical telemetry and Offline RL Debugging:
 
 Frontend Architecture: A React-based web dashboard utilizing the WebGPU API for Instanced Rendering (up to 10,000 agents in a single draw call).
 Resource Lifecycle Management (Critical): To prevent VRAM memory leaks, the architecture guarantees that every `GPUBuffer` and `GPUTexture` invokes its `.destroy()` method upon React component unmounting.
-State-Driven Rendering: Colors dynamically reflect the State Contract: Blue (Nomi
+State-Driven Rendering: Colors dynamically reflect the State Contract: Blue (Nominal)

@@ -1,0 +1,48 @@
+
+SPENVIS 4.6.14.3582       	15-Apr-2026   12:38:13
+Coordinate grid
+Project: TUNG
+SpaceData Research
+
+
+
+
+Grid type: single point
+Planet: Earth
+Altitude: 600.0 km
+Latitude: -25.0°
+Longitude: 0.0°
+Universal time: 0.0 hr
+
+
+'*',    29,     1,     9,    13,     5,     5,     1,     0
+'SPENVIS 4.6.14.3582          - 15-Apr-2026 12:38:13'
+'PRJ_DEF', -1,'TUNG'
+'PRJ_HDR', -1,'SpaceData Research'
+'MOD_ABB', -1,'GRD'
+'GRD_TYP', 1, 0
+'GRD_LBL', -1,'Grid type: single point'
+'GRD_VAR', -1,' '
+'MIS_PLA', 1,   3,' '
+'PLA_RAD', 1,   6371.20,'KM'
+'PLA_DIS', 1,     1.000,'AU'
+'PS Annotation', 12,  0
+'Grid type: single point'
+ 0.05, 2.00, 0.00
+'Planet: Earth'
+ 0.10, 1.50, 0.00
+'Altitude:    600.0 km'
+ 0.10, 1.50, 0.00
+'Latitude: -25.0 deg'
+ 0.10, 1.50, 0.00
+'Longitude:    0.0 deg'
+ 0.10, 1.50, 0.00
+'Universal time:  0.0 hr'
+ 0.10, 1.50, 0.00
+'Altitude','km', 1,'Altitude'
+'Latitude','deg', 1,'Latitude'
+'Longitude','deg', 1,'Longitude'
+'LT','hr', 1,'Local Time'
+'UT','hr', 1,'Universal Time'
+ 6.00000E+02, -25.000,    0.000,  0.000,  0.000
+'End of File'

@@ -1,146 +1,197 @@
 # IMPLEMENTATION PLAN (ACTIONABLE TASKS): S-MAS PROJECT
 
     [General Scientific Disclaimer: Training vs. Mission-Grade]
-    The C++ Physics Engine developed in this project is explicitly designed as a "Training Approximation" environment. The priority is to achieve high-throughput simulation (millions of steps per second) necessary for MARL convergence. While equations are grounded in real physics, the models (Atmosphere, Radiation, Degradation) utilize lightweight approximations and static lookups. This system is optimized for training AI policies and is not a substitute for mission-grade, high-fidelity orbital mechanics software (e.g., AGI STK or NASA GMAT).
+    The C++ Physics Engine developed in this project is explicitly designed as a "Training Approximation" environment. The priority is to achieve high-throughput simulation (millions of steps per second) necessary for MARL convergence. While equations are grounded in real physics, the models utilize lightweight approximations and static lookups. This system is optimized for training AI policies and is not intended to replace mission-grade orbital mechanics software.
+
+    Read pipeline.md first
+
+    Read data from dataset folder, then do the task below
 
 ## Phase 0: System Setup & Architecture
 
-    Setting up the environment to enable interoperability between C++, C#, Python, and the React frontend.
+    Setting up the multi-language environment and defining strict global contracts.
 
-        [ ] Task 0.1: Initialize the Git Repository and standard directory structure (/backend_cpp, /controller_csharp, /marl_python, /frontend_webgpu).
+        [ ] Task 0.1: Initialize the Git Repository and directory structure (/backend_cpp, /controller_csharp, /marl_python, /frontend_webgpu).
 
-        [ ] Task 0.2: Set up the Python virtual environment (venv) and install core dependencies (torch, numpy, onnx,...).
+        [ ] Task 0.2: Set up the Python venv and install dependencies (torch, numpy, onnx).
 
-        [ ] Task 0.3: Initialize the C++ project with CMake (crucial for building the shared library .dll for Windows or .so for Linux).
+        [ ] Task 0.3: Initialize the C++ project with CMake (crucial for building .dll/.so shared libraries).
 
-        [ ] Task 0.4: Initialize the C# project (Console App or ASP.NET Core) and configure P/Invoke for C++ interoperability.
+        [ ] Task 0.4: Initialize the C# project and React project (Vite + TypeScript).
 
-        [ ] Task 0.5: Initialize the React project using Vite (with TypeScript support).
+        [ ] Task 0.5: Strict State/Action Contracts & Versioning (CRITICAL)
 
-## Phase 1: Build Engine (C++ Physics Core Backend)
+            [ ] Define the Global Physics Time Step: dt = 5.0 seconds. All integrators and reward calculations must hardcode or strictly adhere to this delta time.
 
-    Developing the ultra-lightweight physics core to parse static files and compute the system State.
+            [ ] Versioning Contract: Define the Memory Layout Contract (C-Struct). Both StatePacket and ActionPacket must include a version header (e.g., uint8_t version = 1;). If Python sends a v2 Action to a v1 C++ Engine, the system must catch the version mismatch and throw an error, preventing memory corruption.
+
+### Phase 1: Build Engine (C++ Physics Core Backend)
+
+    Developing the ultra-lightweight physics core. Dynamics modules are decoupled for easier Unit Testing.
 
         [ ] Task 1.1: Data Parsers & Static Heatmaps
 
-            [ ] 1.1.1: Write C++ CSV parsers for F10.7 and Kp/Ap indices (NOAA).
+            [ ] 1.1.1: Write a CSV parser for F10.7 and Kp/Ap indices.
 
-            [ ] 1.1.2: Write C++ parser for the SPENVIS AP-8 2D Static Heatmap (Proton Flux).
-
-            [Scientific Disclaimer: Static Heatmap] The SAA radiation heatmap is a static 2D grid representing average historical proton flux. It ignores real-time micro-fluctuations, solar particle events (SPEs), and localized space debris. It is sufficient for teaching agents spatial hazard avoidance but lacks the temporal dynamism of actual radiation belts.
+            [ ] 1.1.2: Write a parser for the SPENVIS AP-8 2D Static Heatmap.
 
         [ ] Task 1.2: Math & Geometry Engine
 
-            [ ] 1.2.1: Implement the Analytical Ray-Box Intersection algorithm to calculate eclipse periods.
+            [ ] 1.2.1: Implement Analytical Ray-Box Intersection (Eclipse calculation).
 
-            [ ] 1.2.2: Implement Spherical Trigonometry to check Line-of-Sight (LoS) with an Elevation Mask of $5^\circ$.
+            [ ] 1.2.2: Implement Spherical Trigonometry (LoS calculation, $5^\circ$ Elevation Mask).
 
-        [ ] Task 1.3: Dynamics & Orbital Decay Implementation
+        [ ] Task 1.3: Atmospheric Subsystem (NRLMSISE-00)
 
-            [ ] 1.3.1: Embed the open-source NRLMSISE-00 atmospheric model to calculate density ($\rho$) dynamically.
+            [ ] 1.3.1: Embed the open-source NRLMSISE-00 atmospheric model.
 
-            [ ] 1.3.2: Implement the Aerodynamic Drag equation ($F_D = -0.5 \cdot \rho \cdot A \cdot C_D \cdot v^2$) and J2 perturbations.
+            [ ] 1.3.2: Write a Wrapper Interface returning Density $\rho$.
 
-            [ ] 1.3.3: Implement an ODE Integrator (e.g., Runge-Kutta 4 or Euler method) to update the satellite's position, velocity, and altitude at each time step based on $F_D$
-        
-        [ ] Task 1.4: Power & Hardware Degradation Subsystem
+        [ ] Task 1.4: Orbital Perturbations Subsystem
 
-            [ ] 1.4.1: Program the SatelliteBus class to manage State of Charge (SoC) and Power Budget (charge vs. discharge).
+            [ ] 1.4.1: Implement Aerodynamic Drag ($F_D = -0.5 \cdot \rho \cdot A \cdot C_D \cdot v^2$).
 
-            [ ] 1.4.2: Implement the Arrhenius Model (thermal cycling degradation) and Radiation Power Fade mathematics.
+            [ ] 1.4.2: Implement J2 perturbation (Earth oblateness effect).
 
-        [ ] Task 1.5: C-API Export
+        [ ] Task 1.5: Numerical Integrator (ODE Solver)
 
-            [ ] Write extern "C" functions (UpdatePhysics(), GetState()) to expose data to C#.
+            [ ] 1.5.1: Implement a Runge-Kutta 4 (RK4) solver strictly utilizing dt = 5s.
 
-### Phase 2 & 3: Custom MAS & Mission Logic (Python)
+        [ ] Task 1.6: Power Subsystem & Failure Contract
 
-    Constructing the MARL training environment, preprocessing pipelines, and Agent logic.
+            [ ] 1.6.1: Code the SatelliteBus class (State of Charge, Power Budget, Arrhenius degradation).
 
-        [ ] Task 2.1: Data Preprocessing & Look-ahead Features
+            [ ] 1.6.2: Define the Failure Contract: The satellite is strictly considered "Dead" (Done = True) if any of the following occur:
 
-            [ ] 2.1.1: Write linear interpolation functions to synchronize 3-hour Kp/Ap data to the C++ tick rate.
+                1. Power Failure: Battery SoC $\le 0\%$.
 
-            [ ] 2.1.2: Generate temporal "Look-ahead" (future) and "Look-back" (historical) feature vectors for solar indices.
+                2. Telemetry Loss: Loss of Line-of-Sight (LoS) communication with any Ground Station for $> 72$ continuous hours.
 
-            [Scientific Disclaimer: Look-ahead Features] Providing agents with perfect future F10.7/Kp data assumes the satellite receives flawless space weather forecast uplinks from Earth. In reality, these forecasts carry prediction errors and uplink latency, which the simulation abstracts away for training stability.
+                3. Re-entry: Altitude drops below $200\text{ km}$.
 
-        [ ] Task 2.2: Observation Spaces & Normalization
+        [ ] Task 1.7: C-API Export
 
-            [ ] Define the State Space, apply Data Normalization (Min-Max, Robust Scaling), and cast observations to FP16 precision.
+            [ ] Write extern "C" functions adhering strictly to the Task 0.5 versioned State Contract.
 
-        [ ] Task 2.3: Reward Shaping Implementation
+#### Phase 2: Core MAS & Survival Training (Python) 
 
-            [ ] Code the Potential-based Survival Reward ($R_{survival}$) based on battery/fuel health.
+    Constructing the MARL architecture, scaling strategies, and training loop.
 
-            [ ] Code the Conditional Mission Reward ($r_{coverage}$) and the severe penalty ($P_{fatal\_risk}$) for payload activation in hazard zones.
-        
-        [ ] Task 2.4: Agent Neural Networks (custom_algorithm.py)
+        [ ] Task 2.1: Data Preprocessing & Features
 
-            [ ] Construct PyTorch architectures for Nav, Bus, and Mission Agents.
+            [ ] 2.1.1: Linearly interpolate space weather data to match the dt = 5s tick rate.
 
-            [ ] Implement the Software-Defined Resiliency constraint (e.g., Bus sleep signal forces Mission Payload to 0).
+            [ ] 2.1.2: Generate Look-ahead/Look-back vectors.
 
-        [ ] Task 2.5: ONNX Export Pipeline
+        [ ] Task 2.2: Observation/Action Spaces & Normalization
 
-            [ ] Write a script to quantize model weights (FP32 $\rightarrow$ FP16) and export the trained agents to .onnx files.
+            [ ] Define the State Space, apply Data Normalization (Min-Max, Robust Scaling), and cast to FP16.
 
-#### Phase 4A: Export & Controller (C# Execution Bridge)
+            [ ] Define the Action Contract:
 
-    Orchestrating the C++ Core, executing AI Models via ONNX, and streaming telemetry.
+                1. Thrust (Nav Agent): Continuous 3D Vector $[-1.0, 1.0]$ representing attitude vector and throttle percentage.
 
-        [ ] Task 4.1: ONNX Runtime C++ / C# Integration
+                2. Sleep (Bus Agent): Discrete/Binary $[0, 1]$. Output uses an Argmax or Sigmoid threshold ($> 0.5 = 1$).
 
-            [ ] 4.1.1: Install the Microsoft.ML.OnnxRuntime package.
+                3. Payload (Mission Agent): Discrete/Binary $[0, 1]$ (ON/OFF).
 
-            [ ] 4.1.2: Initialize the InferenceSession to load .onnx models into memory.
+        [ ] Task 2.3: Survival Logic & Explicit Reward Weights
 
-            [ ] 4.1.3: Write mapping functions to convert C# float[] state arrays into Tensor<float> inputs for ONNX.
+            [ ] Implement $R_{survival}$ utilizing explicit weights to balance competing objectives. Example baseline:
 
-            [ ] 4.1.4: Extract and cast the ONNX output tensors back into actionable C# commands (Thrust, Sleep, Toggle).
+                $R_t = w_1(1.0) - w_2(\Delta V_{used}) - w_3(\text{DoD}) - w_4(P_{fatal})$
+
+                Suggested Weights: $w_1 = 1.0$ (Alive bonus), $w_2 = 5.0$ (Fuel penalty), $w_3 = 2.0$ (Battery Depth of Discharge penalty), $w_4 = 1000.0$ (Triggering the Failure Contract).
+
+        [ ] Task 2.4: Scaling Strategy (Multi-Agent Architecture)
+
+            [ ] 2.4.1: Implement a Shared Policy Architecture (e.g., MAPPO) to drastically reduce VRAM usage.
+
+            [ ] 2.4.2: Implement Batch Inference ([num_agents, obs_dim]).
+
+        [ ] Task 2.5: Training Strategy & Loop Execution
+
+            [ ] 2.5.1: Define Episode Length: Based on dt = 5s (e.g., 1 Orbit $\approx 1,176$ steps, 1 Week $\approx 120,960$ steps). Implement early truncation if the Failure Contract is triggered.
+
+            [ ] 2.5.2: Write the Training Loop (Reset $\rightarrow$ Rollout $\rightarrow$ GAE $\rightarrow$ Update Policy $\rightarrow$ Log Metrics).
+
+##### Phase 3: Mission Layer & Coordination (Python)
+
+    The opt-in behavioral layer. Can be toggled and trained independently of Phase 2.
+
+        [ ] Task 3.1: Mission Reward Weights & Constraints
+
+            [ ] Implement $r_{coverage}$ and $P_{fatal\_risk}$ with explicit weights.
+
+                Example: $R_{mission} = +50.0$ (Valid Target Imaged) $- 500.0$ (Payload ON inside SAA boundaries).
+
+        [ ] Task 3.2: Mission Agent & Resiliency Logic
+
+            [ ] Construct the Neural Network for the Mission Agent.
+
+            [ ] Implement Software-Defined Resiliency (Override: If Bus Agent deep sleeps $\rightarrow$ Force Mission Payload to 0).
+
+        [ ] Task 3.3: ONNX Export Pipeline
+
+            [ ] Quantize weights (FP32 $\rightarrow$ FP16) and export models to .onnx.
+
+###### Phase 4: The Controller (C# Execution Bridge)
+
+    The orchestrator handling C++ execution, AI batch inference, and telemetry systems.
+
+        [ ] Task 4.1: ONNX Batch Inference Integration
+
+            [ ] 4.1.1: Initialize the InferenceSession.
+
+            [ ] 4.1.2: Map C# state array into a single 2D ONNX Tensor [10000, state_dim] to execute Batch Inference.
 
         [ ] Task 4.2: P/Invoke Bridge (C# $\leftrightarrow$ C++)
 
-            [ ] Declare [DllImport] and [StructLayout] to map C++ unmanaged memory to C#.
+            [ ] Implement unmanaged memory mapping based on the versioned State/Action Contract.
 
-            [ ] Write the Main Execution Loop: C++ Physics Step $\rightarrow$ Get State $\rightarrow$ ONNX Inference $\rightarrow$ Send Action to C++.
+        [ ] Task 4.3: Mission-Critical WebSocket Server
 
-        [ ] Task 4.3: High-Performance WebSocket Server
+            [ ] 4.3.1: Set up an Async WebSocket Server.
 
-            [ ] 4.3.1: Set up an Async TCP/WebSocket Server using a lightweight library (e.g., WatsonWebsocket or Fleck).
+            [ ] 4.3.2: Define a Binary Packet Schema [Header(Version) | Payload | Checksum].
 
-            [ ] 4.3.2: Implement a Binary Serializer. Avoid JSON parsing overhead by packing data into compact byte arrays (e.g., [AgentID (4 bytes) | X (4 bytes) | Y (4 bytes) | Z (4 bytes) | StatusFlag (1 byte)]).
+            [ ] 4.3.3: Implement Backpressure (Drop Stale Frames) to prevent server OOM during client lag.
 
-            [ ] 4.3.3: Manage a thread-safe broadcast loop to push binary states to clients at 30-60 Hz.
+        [ ] Task 4.4: Telemetry Logging & Episode Replay System
 
-#### Phase 4B: WebGPU Dashboard (React Frontend)
+            [ ] 4.4.1: Log State Over Time: Write a high-performance logger (e.g., to Parquet or binary files) capturing the position, battery, and hazard states of all agents at specified intervals.
 
-    Visualizing the massive multi-agent swarm purely as a high-performance "Dumb Renderer".
+            [ ] 4.4.2: Dump Agent Decisions: Log the output actions (Thrust, Sleep, Toggle) from the ONNX model paired with their input states for debugging RL behaviors.
 
-        [ ] Task 4.4: WebSocket Client & Buffer Management
+            [ ] 4.4.3: Offline Replay Mode: Implement a "Replay Engine" that bypasses the C++ Physics and ONNX models, streaming historical log files directly to the WebGPU frontend for post-simulation analysis.
 
-            [ ] 4.4.1: Write a useWebSocket hook to ingest the Binary stream and decode it into a Float32Array.
+###### Phase 5: WebGPU Dashboard (React Frontend)
 
-            [ ] 4.4.2: Maintain and update the unified State Buffer for GPU memory uploads.
+    Visual presentation. High emphasis on Resource Lifecycle management to prevent VRAM leaks.
 
-        [ ] Task 4.5: WebGPU Setup & Environment Rendering
+        [ ] Task 5.1: WebSocket Client & Decoder
 
-            [ ] 4.5.1: Request navigator.gpu.requestAdapter() and initialize the Device Context on the HTML Canvas.
+            [ ] Write a useWebSocket hook to ingest the Binary stream, decode (checking Header version), and handle Replay Mode controls (Play/Pause/Scrub).
 
-            [ ] 4.5.2: Configure the Pipeline Layout, Camera projection matrices, and OrbitControls.
+        [ ] Task 5.2: WebGPU Context & Resource Lifecycle (Critical)
 
-            [ ] 4.5.3: Write WGSL Vertex/Fragment Shaders to render the textured Earth sphere and day/night illumination.
+            [ ] 5.2.1: Initialize the Device Context.
 
-        [ ] Task 4.6: Instanced Rendering (The Swarm)
+            [ ] 5.2.2: Lifecycle Manager: Ensure every GPUBuffer and GPUTexture has its .destroy() method called upon component unmount.
 
-            [ ] 4.6.1: Write a WGSL Shader utilizing @builtin(instance_index) to draw a single low-poly satellite model up to 10,000 times in a single draw call.
+        [ ] Task 5.3: Environment Render
 
-            [ ] 4.6.2: Bind the State Buffer to dynamically update instance positions and colors (Blue = Nominal, Green = Payload ON, Red = Fatal).
+            [ ] Write WGSL Shaders to draw the Earth sphere with day/night illumination.
 
-        [ ] Task 4.7: Trajectory Trails
+        [ ] Task 5.4: Instanced Rendering (The Swarm)
 
-            [ ] 4.7.1: Implement a Circular Buffer on the frontend to track the last 10-20 position vectors of each active agent.
+            [ ] Write a WGSL Shader utilizing @builtin(instance_index) to draw 10,000 satellites in a single Draw Call.
 
-            [ ] 4.7.2: Utilize line-strip topology in WebGPU to render short fading orbital trails behind the agents.
+            [ ] Map colors dynamically (Blue = Nominal, Green = Active Payload, Red = Fatal Error).
 
-            
+        [ ] Task 5.5: Trajectory Trails
+
+            [ ] Manage a Circular Buffer for orbital trails using line-strip topology.
+
+
+
