@@ -1,3 +1,5 @@
+##### ACTIVATE .VENV .\.venv\Scripts\activate
+
 # IMPLEMENTATION PLAN (ACTIONABLE TASKS): S-MAS PROJECT
 
     [General Scientific Disclaimer: Training vs. Mission-Grade]
@@ -73,7 +75,7 @@
 
             [ ] Write extern "C" functions adhering strictly to the Task 0.5 versioned State Contract.
 
-#### Phase 2: Core MAS & Survival Training (Python) 
+#### Phase 2: Core MAS & Survival Training (Python)
 
     Constructing the MARL architecture, scaling strategies, and training loop.
 
@@ -192,6 +194,3 @@
         [ ] Task 5.5: Trajectory Trails
 
             [ ] Manage a Circular Buffer for orbital trails using line-strip topology.
-
-
-
