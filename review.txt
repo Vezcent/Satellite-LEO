@@ -1,0 +1,18 @@
+Project: S-MAS (Satellite Multi-Agent System for Lifetime Optimization)
+
+Core Tech: C++ (Physics Core), Python (PyTorch/MARL), ONNX Runtime, WebGPU (Visualization), ESA/NASA Datasets.
+
+Impact: Developed a high-fidelity autonomous satellite simulation optimizing orbital lifetime and hardware resiliency against radiation (SAA).
+
+Key Accomplishments:
+
+Implemented a high-performance physics engine in C++ utilizing RK4 solvers for orbital decay and NRLMSISE-00 atmospheric models.
+
+Architected a Multi-Agent Reinforcement Learning (MARL) framework using Shared Policy and Centralized Training, Decentralized Execution (CTDE) to control 10,000+ agents simultaneously.
+
+Processed and optimized 20 years of space weather and trapped radiation datasets (OMNIWeb/SPENVIS), reducing storage footprint while maintaining 5.0s temporal resolution.
+
+Integrated real-time 3D telemetry visualization using WebGPU for low-latency instance rendering of satellite swarms.
+
+
+

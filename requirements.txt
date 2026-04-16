@@ -1,5 +1,24 @@
-help me read dataset/SpaceWeather_Raw.csv, then edit src/processing/Space_Weather.py to do the task
+# --- Core Data & Math ---
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+matplotlib>=3.7.0
 
-Space Weather Data (space weather_raw.csv)Goal: Delete error data (999...), interpolate empty spaces and filter redundant columns for C++ to calculate Atmospheric Drag (Drag).Preprocessing steps (Using Python's pandas library):Cut Header: Delete 13 introductory text lines of OMNIWeb.Filter columns: Keep only columns YEAR, DOY, HR, Kp (column 5), Dst (column 6), Ap (column 7), F10.7 (column 8). Delete columns 1, 2, 3, 4, 9, 10, 11. Eliminate NaN traps (Most important): Scan the entire table, find the numbers 999.9, 99999.99 and replace with NaN. Linear interpolation (Interpolate): Fill NaN cells with the average value of the previous and next hours for a smooth asymptote. Normalize Kp: Divide the Kp column by 10 (Example 53 $\rightarrow$ 5.3).Output format (space_weather.csv): Code snippetYear,DOY,Hour,Kp,Dst,Ap,F10.7
-2000,1,0,5.3,-45,56,125.6
-2000,1,1,5.3,-37,56,125.6
+# --- Reinforcement Learning ---
+gymnasium[all]>=0.28.1
+ray[rllib]>=2.6.0
+
+# --- AI Deployment (ONNX) ---
+onnx>=1.14.0
+onnxruntime-gpu>=1.15.0
+
+# --- Backend & Telemetry ---
+fastapi>=0.100.0
+uvicorn>=0.23.0
+websockets>=11.0
+
+# --- Utilities ---
+tqdm
+python-dotenv
+
+

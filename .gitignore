@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# C++ build artifacts
+backend_cpp/build/
+*.obj
+*.o
+*.dll
+*.so
+*.a
+*.exe
+*.lib
+
+# IDE
+.vs/
+.vscode/
+*.user
+
+/review.txt
+/task.md
+/current_progress.txt
+/pipeline.md
