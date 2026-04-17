@@ -1,0 +1,332 @@
+"""
+S-MAS Phase 2 — Tasks 2.4 / 2.5
+MAPPO (Multi-Agent PPO) with Shared Policy.
+
+Architecture
+------------
+  • Navigation Actor  : obs → MLP → μ, log_σ  (continuous Gaussian)
+  • Resource Actor    : obs → MLP → logit      (discrete Bernoulli)
+  • Shared Critic     : obs → MLP → V(s)       (single value head)
+
+All three share the same hidden layers (Shared Policy) to minimise
+VRAM and enable Batch Inference [batch, obs_dim].
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Normal, Bernoulli
+import numpy as np
+from typing import Optional, Tuple, Dict, List
+from config import MAPPOConfig, ObsConfig
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Network building blocks
+# ═══════════════════════════════════════════════════════════════════
+
+def _make_mlp(in_dim: int, hidden_dim: int, num_layers: int,
+              activation: str = "tanh") -> nn.Sequential:
+    """Build a simple MLP trunk."""
+    act = nn.Tanh if activation == "tanh" else nn.ReLU
+    layers = []
+    dim = in_dim
+    for _ in range(num_layers):
+        layers.append(nn.Linear(dim, hidden_dim))
+        layers.append(act())
+        dim = hidden_dim
+    return nn.Sequential(*layers)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Actor heads
+# ═══════════════════════════════════════════════════════════════════
+
+class NavigationHead(nn.Module):
+    """
+    Continuous actor for Navigation Agent.
+    Outputs: μ (4-dim), log_σ (4-dim, learnable parameter).
+    Action: thrust_x, thrust_y, thrust_z ∈ [-1,1], throttle ∈ [0,1].
+    """
+    def __init__(self, hidden_dim: int, action_dim: int = 4):
+        super().__init__()
+        self.mu = nn.Linear(hidden_dim, action_dim)
+        self.log_std = nn.Parameter(torch.zeros(action_dim))
+
+    def forward(self, features: torch.Tensor):
+        mu = self.mu(features)
+        std = self.log_std.exp().expand_as(mu)
+        return mu, std
+
+    def sample(self, features: torch.Tensor):
+        mu, std = self.forward(features)
+        dist = Normal(mu, std)
+        raw_action = dist.rsample()
+        log_prob = dist.log_prob(raw_action).sum(-1)
+        entropy = dist.entropy().sum(-1)
+        # Squash to valid ranges
+        action = torch.tanh(raw_action)
+        # Correction for tanh squashing in log_prob
+        log_prob -= torch.log(1.0 - action.pow(2) + 1e-6).sum(-1)
+        return action, log_prob, entropy
+
+    def evaluate(self, features: torch.Tensor, action: torch.Tensor):
+        mu, std = self.forward(features)
+        dist = Normal(mu, std)
+        # Unsquash for log_prob computation
+        raw_action = torch.atanh(action.clamp(-0.999, 0.999))
+        log_prob = dist.log_prob(raw_action).sum(-1)
+        log_prob -= torch.log(1.0 - action.pow(2) + 1e-6).sum(-1)
+        entropy = dist.entropy().sum(-1)
+        return log_prob, entropy
+
+
+class ResourceHead(nn.Module):
+    """
+    Discrete actor for Resource Agent (Bus Manager).
+    Outputs: logit for Bernoulli(deep_sleep).
+    """
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.logit = nn.Linear(hidden_dim, 1)
+
+    def forward(self, features: torch.Tensor):
+        return self.logit(features).squeeze(-1)
+
+    def sample(self, features: torch.Tensor):
+        logit = self.forward(features)
+        dist = Bernoulli(logits=logit)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
+        entropy = dist.entropy()
+        return action, log_prob, entropy
+
+    def evaluate(self, features: torch.Tensor, action: torch.Tensor):
+        logit = self.forward(features)
+        dist = Bernoulli(logits=logit)
+        log_prob = dist.log_prob(action)
+        entropy = dist.entropy()
+        return log_prob, entropy
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Shared Actor-Critic
+# ═══════════════════════════════════════════════════════════════════
+
+class SharedActorCritic(nn.Module):
+    """
+    Shared-trunk network for MAPPO.
+
+    Architecture:
+        obs → trunk_MLP → features
+        features → NavigationHead  (continuous 4D)
+        features → ResourceHead   (discrete binary)
+        features → value_head     (scalar V(s))
+    """
+
+    def __init__(self, obs_dim: int, cfg: Optional[MAPPOConfig] = None):
+        super().__init__()
+        self.cfg = cfg or MAPPOConfig()
+
+        self.trunk = _make_mlp(obs_dim, self.cfg.hidden_dim,
+                               self.cfg.num_layers, self.cfg.activation)
+        self.nav_head = NavigationHead(self.cfg.hidden_dim, action_dim=4)
+        self.bus_head = ResourceHead(self.cfg.hidden_dim)
+        self.value_head = nn.Linear(self.cfg.hidden_dim, 1)
+
+    def get_features(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.trunk(obs)
+
+    def get_value(self, obs: torch.Tensor) -> torch.Tensor:
+        features = self.get_features(obs)
+        return self.value_head(features).squeeze(-1)
+
+    def act(self, obs: torch.Tensor) -> Dict:
+        """
+        Sample actions from both heads.
+        Returns dict with actions, log_probs, entropy, value.
+        """
+        features = self.get_features(obs)
+
+        nav_action, nav_lp, nav_ent = self.nav_head.sample(features)
+        bus_action, bus_lp, bus_ent = self.bus_head.sample(features)
+        value = self.value_head(features).squeeze(-1)
+
+        return {
+            "nav_action": nav_action,       # (B, 4) tanh-squashed
+            "bus_action": bus_action,        # (B,)   0 or 1
+            "nav_log_prob": nav_lp,          # (B,)
+            "bus_log_prob": bus_lp,          # (B,)
+            "entropy": nav_ent + bus_ent,    # (B,)
+            "value": value,                  # (B,)
+        }
+
+    def evaluate_actions(self, obs: torch.Tensor,
+                         nav_action: torch.Tensor,
+                         bus_action: torch.Tensor) -> Dict:
+        """Re-evaluate log_probs and entropy for saved actions (PPO update)."""
+        features = self.get_features(obs)
+
+        nav_lp, nav_ent = self.nav_head.evaluate(features, nav_action)
+        bus_lp, bus_ent = self.bus_head.evaluate(features, bus_action)
+        value = self.value_head(features).squeeze(-1)
+
+        return {
+            "nav_log_prob": nav_lp,
+            "bus_log_prob": bus_lp,
+            "entropy": nav_ent + bus_ent,
+            "value": value,
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Rollout Buffer
+# ═══════════════════════════════════════════════════════════════════
+
+class RolloutBuffer:
+    """Stores transitions for PPO update with GAE computation."""
+
+    def __init__(self, capacity: int, obs_dim: int, nav_dim: int = 4):
+        self.capacity = capacity
+        self.obs      = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.nav_acts = np.zeros((capacity, nav_dim), dtype=np.float32)
+        self.bus_acts = np.zeros(capacity, dtype=np.float32)
+        self.rewards  = np.zeros(capacity, dtype=np.float32)
+        self.values   = np.zeros(capacity, dtype=np.float32)
+        self.nav_lps  = np.zeros(capacity, dtype=np.float32)
+        self.bus_lps  = np.zeros(capacity, dtype=np.float32)
+        self.dones    = np.zeros(capacity, dtype=np.float32)
+        self.returns  = np.zeros(capacity, dtype=np.float32)
+        self.advantages = np.zeros(capacity, dtype=np.float32)
+        self.ptr = 0
+
+    def push(self, obs, nav_act, bus_act, reward, value,
+             nav_lp, bus_lp, done):
+        i = self.ptr
+        self.obs[i] = obs
+        self.nav_acts[i] = nav_act
+        self.bus_acts[i] = bus_act
+        self.rewards[i] = reward
+        self.values[i] = value
+        self.nav_lps[i] = nav_lp
+        self.bus_lps[i] = bus_lp
+        self.dones[i] = float(done)
+        self.ptr += 1
+
+    def compute_gae(self, last_value: float,
+                    gamma: float = 0.99, lam: float = 0.95):
+        """Generalised Advantage Estimation."""
+        gae = 0.0
+        for t in reversed(range(self.ptr)):
+            if t == self.ptr - 1:
+                next_val = last_value
+                next_done = 0.0
+            else:
+                next_val = self.values[t + 1]
+                next_done = self.dones[t + 1]
+
+            delta = (self.rewards[t] +
+                     gamma * next_val * (1.0 - self.dones[t]) -
+                     self.values[t])
+            gae = delta + gamma * lam * (1.0 - self.dones[t]) * gae
+            self.advantages[t] = gae
+            self.returns[t] = gae + self.values[t]
+
+    def get_batches(self, batch_size: int, device: str = "cpu"):
+        """Yield shuffled mini-batches as torch tensors."""
+        indices = np.arange(self.ptr)
+        np.random.shuffle(indices)
+
+        for start in range(0, self.ptr, batch_size):
+            end = start + batch_size
+            if end > self.ptr:
+                break
+            idx = indices[start:end]
+            yield {
+                "obs":      torch.tensor(self.obs[idx],      device=device),
+                "nav_acts": torch.tensor(self.nav_acts[idx],  device=device),
+                "bus_acts": torch.tensor(self.bus_acts[idx],  device=device),
+                "returns":  torch.tensor(self.returns[idx],   device=device),
+                "advantages": torch.tensor(self.advantages[idx], device=device),
+                "nav_lps":  torch.tensor(self.nav_lps[idx],   device=device),
+                "bus_lps":  torch.tensor(self.bus_lps[idx],   device=device),
+            }
+
+    def reset(self):
+        self.ptr = 0
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  PPO Update
+# ═══════════════════════════════════════════════════════════════════
+
+def ppo_update(model: SharedActorCritic,
+               optimizer: torch.optim.Optimizer,
+               buffer: RolloutBuffer,
+               cfg: MAPPOConfig,
+               device: str = "cpu") -> Dict[str, float]:
+    """
+    Run PPO update epochs on the rollout buffer.
+    Returns dict of mean losses for logging.
+    """
+    total_policy_loss = 0.0
+    total_value_loss  = 0.0
+    total_entropy     = 0.0
+    num_updates       = 0
+
+    for _epoch in range(cfg.num_epochs):
+        for batch in buffer.get_batches(cfg.batch_size, device):
+            obs     = batch["obs"]
+            nav_a   = batch["nav_acts"]
+            bus_a   = batch["bus_acts"]
+            old_nav = batch["nav_lps"]
+            old_bus = batch["bus_lps"]
+            ret     = batch["returns"]
+            adv     = batch["advantages"]
+
+            # Normalise advantages
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+
+            # Re-evaluate
+            out = model.evaluate_actions(obs, nav_a, bus_a)
+            new_nav = out["nav_log_prob"]
+            new_bus = out["bus_log_prob"]
+            value   = out["value"]
+            entropy = out["entropy"]
+
+            # Combined log-prob ratio
+            ratio_nav = torch.exp(new_nav - old_nav)
+            ratio_bus = torch.exp(new_bus - old_bus)
+            ratio = ratio_nav * ratio_bus
+
+            # Clipped surrogate
+            surr1 = ratio * adv
+            surr2 = torch.clamp(ratio, 1.0 - cfg.clip_eps,
+                                1.0 + cfg.clip_eps) * adv
+            policy_loss = -torch.min(surr1, surr2).mean()
+
+            # Value loss
+            value_loss = F.mse_loss(value, ret)
+
+            # Total loss
+            loss = (policy_loss
+                    + cfg.value_loss_coeff * value_loss
+                    - cfg.entropy_coeff * entropy.mean())
+
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
+            optimizer.step()
+
+            total_policy_loss += policy_loss.item()
+            total_value_loss  += value_loss.item()
+            total_entropy     += entropy.mean().item()
+            num_updates       += 1
+
+    if num_updates == 0:
+        return {"policy_loss": 0., "value_loss": 0., "entropy": 0.}
+
+    return {
+        "policy_loss": total_policy_loss / num_updates,
+        "value_loss":  total_value_loss / num_updates,
+        "entropy":     total_entropy / num_updates,
+    }
