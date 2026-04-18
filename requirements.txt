@@ -21,4 +21,4 @@ websockets>=11.0
 tqdm
 python-dotenv
 
-
+# Python 3.11.9

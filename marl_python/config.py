@@ -104,4 +104,4 @@ class TrainConfig:
     checkpoint_dir: str = str(PROJECT_ROOT / "marl_python" / "checkpoints")
     log_dir: str = str(PROJECT_ROOT / "marl_python" / "logs")
     seed: int = 42
-    device: str = "cpu"                # "cpu" or "cuda"
+    device: str = "cuda"                # "cpu" or "cuda"
