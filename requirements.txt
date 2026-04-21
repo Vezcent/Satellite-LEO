@@ -1,24 +1,26 @@
 # --- Core Data & Math ---
-numpy>=1.24.0
-pandas>=2.0.0
-scipy>=1.10.0
-matplotlib>=3.7.0
+"numpy>=1.24.0"
+"pandas>=2.0.0"
+"scipy>=1.10.0"
+"matplotlib>=3.7.0"
+"pyarrow>=14.0.0"
+
 
 # --- Reinforcement Learning ---
-gymnasium[all]>=0.28.1
-ray[rllib]>=2.6.0
+"gymnasium[all]>=0.28.1"
+"ray[rllib]>=2.6.0"
 
 # --- AI Deployment (ONNX) ---
-onnx>=1.14.0
-onnxruntime-gpu>=1.15.0
+"onnx>=1.14.0"
+"onnxruntime-gpu>=1.15.0"
 
 # --- Backend & Telemetry ---
-fastapi>=0.100.0
-uvicorn>=0.23.0
-websockets>=11.0
+"fastapi>=0.100.0"
+"uvicorn>=0.23.0"
+"websockets>=11.0"
 
 # --- Utilities ---
-tqdm
-python-dotenv
+"tqdm"
+"python-dotenv"
 
 # Python 3.11.9

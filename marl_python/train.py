@@ -171,16 +171,16 @@ def train(train_cfg: TrainConfig,
             "episode":    episode_count,
             "steps":      episode_steps,
             "total_steps": total_steps,
-            "reward":     round(episode_reward, 2),
-            "soc_final":  round(raw_state.battery_soc * 100, 1),
-            "alt_final":  round(raw_state.altitude_km, 1),
-            "fdir":       raw_state.fdir_mode,
-            "done_reason": raw_state.done_reason,
-            "policy_loss": round(losses.get("policy_loss", 0), 5),
-            "value_loss":  round(losses.get("value_loss", 0), 5),
-            "entropy":     round(losses.get("entropy", 0), 4),
-            "sps":         round(sps, 0),
-            "time_s":      round(ep_time, 1),
+            "reward":     round(float(episode_reward), 2),
+            "soc_final":  round(float(raw_state.battery_soc) * 100, 1),
+            "alt_final":  round(float(raw_state.altitude_km), 1),
+            "fdir":       int(raw_state.fdir_mode),
+            "done_reason": int(raw_state.done_reason),
+            "policy_loss": round(float(losses.get("policy_loss", 0)), 5),
+            "value_loss":  round(float(losses.get("value_loss", 0)), 5),
+            "entropy":     round(float(losses.get("entropy", 0)), 4),
+            "sps":         round(float(sps), 0),
+            "time_s":      round(float(ep_time), 1),
         }
         log_file.write(json.dumps(log_entry) + "\n")
         log_file.flush()
@@ -194,7 +194,7 @@ def train(train_cfg: TrainConfig,
                   f"Alt {raw_state.altitude_km:6.1f}km | "
                   f"FDIR {raw_state.fdir_mode} | "
                   f"Done {raw_state.done_reason} | "
-                  f"π_loss {losses.get('policy_loss',0):.4f} | "
+                  f"pi_loss {losses.get('policy_loss',0):.4f} | "
                   f"v_loss {losses.get('value_loss',0):.4f} | "
                   f"H {losses.get('entropy',0):.3f} | "
                   f"{sps:.0f} sps")
