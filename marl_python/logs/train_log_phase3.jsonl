@@ -1,0 +1,1 @@
+{"episode": 1, "phase": 3, "steps": 17280, "total_steps": 17280, "reward": 105338.16, "soc_final": 95.7, "alt_final": 570.9, "fdir": 0, "done_reason": 0, "policy_loss": -0.00019, "value_loss": 116207.55339, "entropy": 6.9852, "sps": 1060.0, "time_s": 16.3, "payload_on_steps": 9364, "valid_targets": 3224, "saa_violations": 0}

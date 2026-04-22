@@ -1,19 +1,26 @@
 """
-S-MAS Phase 2 — Task 2.3
-Explicit Reward Shaping for Survival.
+S-MAS Phase 2/3 — Tasks 2.3 / 3.2
+Explicit Reward Shaping for Survival + Mission.
 
-Implements the reward function from pipeline §3.2.2:
+Phase 2 (Survival):
     R_t = w1(alive) - w2(ΔV) - w3(DoD) - w4(FDIR_intervention) - w5(fatal)
+
+Phase 3 (Mission):
+    R_mission = R_survival
+                + (payload_on × valid_target) × w_valid_target
+                - (payload_on × in_saa) × w_saa_penalty
+                - (payload_on × NOT_over_target) × w_idle_power
 
 Design notes:
   • FDIR penalty is applied when the mode transitions FROM NOMINAL
     to DEGRADED or SAFE, teaching the AI that it triggered the safety net.
   • The fatal penalty is only applied on the terminal step.
   • Fuel penalty uses throttle magnitude as a proxy for ΔV.
+  • Valid target: not in SAA, not in eclipse, within lat band, sufficient solar.
 """
 import numpy as np
 from typing import Optional
-from config import RewardConfig
+from config import RewardConfig, MissionRewardConfig
 from env_wrapper import StatePacket
 
 
@@ -83,3 +90,99 @@ class SurvivalReward:
             reward -= self.cfg.w_fatal
 
         return reward
+
+
+class MissionReward:
+    """
+    Phase 3: Mission-layer reward that composes with SurvivalReward.
+
+    Adds three mission-specific terms:
+      +w_valid_target  : payload ON over a valid imaging target
+      -w_saa_penalty   : payload ON inside the SAA (radiation risk)
+      -w_idle_power    : payload ON when NOT over a valid target (wasted power)
+
+    A "valid target" requires ALL of:
+      1. Not inside the SAA boundary
+      2. Not in eclipse (need sunlight for optical imaging)
+      3. Latitude within the imaging band (configurable, default ±60°)
+      4. Sufficient solar power (panel illumination)
+
+    Usage
+    -----
+    >>> rew = MissionReward()
+    >>> r, info = rew.compute(state, action_dict, done, info)
+    """
+
+    def __init__(self,
+                 survival_cfg: Optional[RewardConfig] = None,
+                 mission_cfg: Optional[MissionRewardConfig] = None):
+        self.survival = SurvivalReward(survival_cfg)
+        self.cfg = mission_cfg or MissionRewardConfig()
+
+    def _is_valid_target(self, state: StatePacket) -> bool:
+        """Check if current position is a valid imaging target."""
+        # Must NOT be in SAA
+        if state.in_saa:
+            return False
+        # Must NOT be in eclipse (need sunlight for CHRIS optical instrument)
+        if state.in_eclipse:
+            return False
+        # Must be within valid latitude band
+        lat = state.latitude_deg
+        if lat < self.cfg.target_lat_min or lat > self.cfg.target_lat_max:
+            return False
+        # Must have sufficient solar power (panel illumination)
+        if state.solar_power_w < self.cfg.target_min_solar_w:
+            return False
+        return True
+
+    def compute(self,
+                state: StatePacket,
+                action: dict,
+                done: bool,
+                info: dict) -> tuple:
+        """
+        Compute the combined survival + mission reward.
+
+        Parameters
+        ----------
+        state  : StatePacket from the C++ engine (post-step)
+        action : dict with "nav", "bus", "mission" keys
+        done   : bool — whether the episode terminated
+        info   : dict — from env.step(), includes prev_fdir
+
+        Returns
+        -------
+        (float, dict) — total reward and mission metrics
+        """
+        # ── Survival baseline ──────────────────────────────────────
+        r_survival = self.survival.compute(state, action, done, info)
+
+        # ── Mission terms ──────────────────────────────────────────
+        payload_on = float(action.get("mission", 0))
+        r_mission = 0.0
+        valid_target = self._is_valid_target(state)
+
+        if payload_on > 0.5:
+            if state.in_saa:
+                # CRITICAL: Payload ON inside SAA → massive penalty
+                r_mission -= self.cfg.w_saa_penalty
+            elif valid_target:
+                # Valid imaging opportunity → bonus
+                r_mission += self.cfg.w_valid_target
+            else:
+                # Payload ON but not over target → wasted power
+                r_mission -= self.cfg.w_idle_power
+
+        # ── Compose ────────────────────────────────────────────────
+        total = r_survival + r_mission
+
+        mission_info = {
+            "r_survival": r_survival,
+            "r_mission": r_mission,
+            "payload_on": payload_on > 0.5,
+            "valid_target": valid_target,
+            "saa_violation": payload_on > 0.5 and bool(state.in_saa),
+        }
+
+        return total, mission_info

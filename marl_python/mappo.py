@@ -1,14 +1,15 @@
 """
-S-MAS Phase 2 — Tasks 2.4 / 2.5
+S-MAS Phase 2/3 — Tasks 2.4 / 2.5 / 3.1
 MAPPO (Multi-Agent PPO) with Shared Policy.
 
 Architecture
 ------------
   • Navigation Actor  : obs → MLP → μ, log_σ  (continuous Gaussian)
   • Resource Actor    : obs → MLP → logit      (discrete Bernoulli)
+  • Mission Actor     : obs → MLP → logit      (discrete Bernoulli, Phase 3)
   • Shared Critic     : obs → MLP → V(s)       (single value head)
 
-All three share the same hidden layers (Shared Policy) to minimise
+All four share the same hidden layers (Shared Policy) to minimise
 VRAM and enable Batch Inference [batch, obs_dim].
 """
 import torch
@@ -108,6 +109,35 @@ class ResourceHead(nn.Module):
         return log_prob, entropy
 
 
+class MissionHead(nn.Module):
+    """
+    Discrete actor for Mission Agent (Payload Manager).
+    Outputs: logit for Bernoulli(payload_on).
+    Phase 3: Toggles the CHRIS optical instrument.
+    """
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.logit = nn.Linear(hidden_dim, 1)
+
+    def forward(self, features: torch.Tensor):
+        return self.logit(features).squeeze(-1)
+
+    def sample(self, features: torch.Tensor):
+        logit = self.forward(features)
+        dist = Bernoulli(logits=logit)
+        action = dist.sample()
+        log_prob = dist.log_prob(action)
+        entropy = dist.entropy()
+        return action, log_prob, entropy
+
+    def evaluate(self, features: torch.Tensor, action: torch.Tensor):
+        logit = self.forward(features)
+        dist = Bernoulli(logits=logit)
+        log_prob = dist.log_prob(action)
+        entropy = dist.entropy()
+        return log_prob, entropy
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Shared Actor-Critic
 # ═══════════════════════════════════════════════════════════════════
@@ -120,6 +150,7 @@ class SharedActorCritic(nn.Module):
         obs → trunk_MLP → features
         features → NavigationHead  (continuous 4D)
         features → ResourceHead   (discrete binary)
+        features → MissionHead    (discrete binary, Phase 3)
         features → value_head     (scalar V(s))
     """
 
@@ -131,6 +162,7 @@ class SharedActorCritic(nn.Module):
                                self.cfg.num_layers, self.cfg.activation)
         self.nav_head = NavigationHead(self.cfg.hidden_dim, action_dim=4)
         self.bus_head = ResourceHead(self.cfg.hidden_dim)
+        self.mission_head = MissionHead(self.cfg.hidden_dim)
         self.value_head = nn.Linear(self.cfg.hidden_dim, 1)
 
     def get_features(self, obs: torch.Tensor) -> torch.Tensor:
@@ -142,38 +174,44 @@ class SharedActorCritic(nn.Module):
 
     def act(self, obs: torch.Tensor) -> Dict:
         """
-        Sample actions from both heads.
+        Sample actions from all three heads.
         Returns dict with actions, log_probs, entropy, value.
         """
         features = self.get_features(obs)
 
         nav_action, nav_lp, nav_ent = self.nav_head.sample(features)
         bus_action, bus_lp, bus_ent = self.bus_head.sample(features)
+        mission_action, mission_lp, mission_ent = self.mission_head.sample(features)
         value = self.value_head(features).squeeze(-1)
 
         return {
-            "nav_action": nav_action,       # (B, 4) tanh-squashed
-            "bus_action": bus_action,        # (B,)   0 or 1
-            "nav_log_prob": nav_lp,          # (B,)
-            "bus_log_prob": bus_lp,          # (B,)
-            "entropy": nav_ent + bus_ent,    # (B,)
-            "value": value,                  # (B,)
+            "nav_action": nav_action,           # (B, 4) tanh-squashed
+            "bus_action": bus_action,            # (B,)   0 or 1
+            "mission_action": mission_action,    # (B,)   0 or 1
+            "nav_log_prob": nav_lp,              # (B,)
+            "bus_log_prob": bus_lp,              # (B,)
+            "mission_log_prob": mission_lp,      # (B,)
+            "entropy": nav_ent + bus_ent + mission_ent,  # (B,)
+            "value": value,                      # (B,)
         }
 
     def evaluate_actions(self, obs: torch.Tensor,
                          nav_action: torch.Tensor,
-                         bus_action: torch.Tensor) -> Dict:
+                         bus_action: torch.Tensor,
+                         mission_action: torch.Tensor) -> Dict:
         """Re-evaluate log_probs and entropy for saved actions (PPO update)."""
         features = self.get_features(obs)
 
         nav_lp, nav_ent = self.nav_head.evaluate(features, nav_action)
         bus_lp, bus_ent = self.bus_head.evaluate(features, bus_action)
+        mission_lp, mission_ent = self.mission_head.evaluate(features, mission_action)
         value = self.value_head(features).squeeze(-1)
 
         return {
             "nav_log_prob": nav_lp,
             "bus_log_prob": bus_lp,
-            "entropy": nav_ent + bus_ent,
+            "mission_log_prob": mission_lp,
+            "entropy": nav_ent + bus_ent + mission_ent,
             "value": value,
         }
 
@@ -187,28 +225,39 @@ class RolloutBuffer:
 
     def __init__(self, capacity: int, obs_dim: int, nav_dim: int = 4):
         self.capacity = capacity
-        self.obs      = np.zeros((capacity, obs_dim), dtype=np.float32)
-        self.nav_acts = np.zeros((capacity, nav_dim), dtype=np.float32)
-        self.bus_acts = np.zeros(capacity, dtype=np.float32)
-        self.rewards  = np.zeros(capacity, dtype=np.float32)
-        self.values   = np.zeros(capacity, dtype=np.float32)
-        self.nav_lps  = np.zeros(capacity, dtype=np.float32)
-        self.bus_lps  = np.zeros(capacity, dtype=np.float32)
-        self.dones    = np.zeros(capacity, dtype=np.float32)
-        self.returns  = np.zeros(capacity, dtype=np.float32)
-        self.advantages = np.zeros(capacity, dtype=np.float32)
+        self.obs          = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.nav_acts     = np.zeros((capacity, nav_dim), dtype=np.float32)
+        self.bus_acts     = np.zeros(capacity, dtype=np.float32)
+        self.mission_acts = np.zeros(capacity, dtype=np.float32)
+        self.rewards      = np.zeros(capacity, dtype=np.float32)
+        self.values       = np.zeros(capacity, dtype=np.float32)
+        self.nav_lps      = np.zeros(capacity, dtype=np.float32)
+        self.bus_lps      = np.zeros(capacity, dtype=np.float32)
+        self.mission_lps  = np.zeros(capacity, dtype=np.float32)
+        self.dones        = np.zeros(capacity, dtype=np.float32)
+        self.returns      = np.zeros(capacity, dtype=np.float32)
+        self.advantages   = np.zeros(capacity, dtype=np.float32)
         self.ptr = 0
 
     def push(self, obs, nav_act, bus_act, reward, value,
-             nav_lp, bus_lp, done):
+             nav_lp, bus_lp, done,
+             mission_act: float = 0.0, mission_lp: float = 0.0):
+        """
+        Store one transition.
+
+        Phase 2 callers omit mission_act / mission_lp (they default to 0.0).
+        Phase 3 callers pass them explicitly as keyword args.
+        """
         i = self.ptr
         self.obs[i] = obs
         self.nav_acts[i] = nav_act
         self.bus_acts[i] = bus_act
+        self.mission_acts[i] = mission_act
         self.rewards[i] = reward
         self.values[i] = value
         self.nav_lps[i] = nav_lp
         self.bus_lps[i] = bus_lp
+        self.mission_lps[i] = mission_lp
         self.dones[i] = float(done)
         self.ptr += 1
 
@@ -242,13 +291,15 @@ class RolloutBuffer:
                 break
             idx = indices[start:end]
             yield {
-                "obs":      torch.tensor(self.obs[idx],      device=device),
-                "nav_acts": torch.tensor(self.nav_acts[idx],  device=device),
-                "bus_acts": torch.tensor(self.bus_acts[idx],  device=device),
-                "returns":  torch.tensor(self.returns[idx],   device=device),
-                "advantages": torch.tensor(self.advantages[idx], device=device),
-                "nav_lps":  torch.tensor(self.nav_lps[idx],   device=device),
-                "bus_lps":  torch.tensor(self.bus_lps[idx],   device=device),
+                "obs":          torch.tensor(self.obs[idx],          device=device),
+                "nav_acts":     torch.tensor(self.nav_acts[idx],     device=device),
+                "bus_acts":     torch.tensor(self.bus_acts[idx],     device=device),
+                "mission_acts": torch.tensor(self.mission_acts[idx], device=device),
+                "returns":      torch.tensor(self.returns[idx],      device=device),
+                "advantages":   torch.tensor(self.advantages[idx],  device=device),
+                "nav_lps":      torch.tensor(self.nav_lps[idx],      device=device),
+                "bus_lps":      torch.tensor(self.bus_lps[idx],      device=device),
+                "mission_lps":  torch.tensor(self.mission_lps[idx],  device=device),
             }
 
     def reset(self):
@@ -275,28 +326,32 @@ def ppo_update(model: SharedActorCritic,
 
     for _epoch in range(cfg.num_epochs):
         for batch in buffer.get_batches(cfg.batch_size, device):
-            obs     = batch["obs"]
-            nav_a   = batch["nav_acts"]
-            bus_a   = batch["bus_acts"]
-            old_nav = batch["nav_lps"]
-            old_bus = batch["bus_lps"]
-            ret     = batch["returns"]
-            adv     = batch["advantages"]
+            obs       = batch["obs"]
+            nav_a     = batch["nav_acts"]
+            bus_a     = batch["bus_acts"]
+            mission_a = batch["mission_acts"]
+            old_nav   = batch["nav_lps"]
+            old_bus   = batch["bus_lps"]
+            old_mis   = batch["mission_lps"]
+            ret       = batch["returns"]
+            adv       = batch["advantages"]
 
             # Normalise advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
             # Re-evaluate
-            out = model.evaluate_actions(obs, nav_a, bus_a)
+            out = model.evaluate_actions(obs, nav_a, bus_a, mission_a)
             new_nav = out["nav_log_prob"]
             new_bus = out["bus_log_prob"]
+            new_mis = out["mission_log_prob"]
             value   = out["value"]
             entropy = out["entropy"]
 
-            # Combined log-prob ratio
+            # Combined log-prob ratio (3-agent)
             ratio_nav = torch.exp(new_nav - old_nav)
             ratio_bus = torch.exp(new_bus - old_bus)
-            ratio = ratio_nav * ratio_bus
+            ratio_mis = torch.exp(new_mis - old_mis)
+            ratio = ratio_nav * ratio_bus * ratio_mis
 
             # Clipped surrogate
             surr1 = ratio * adv

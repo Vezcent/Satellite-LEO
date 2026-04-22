@@ -1,5 +1,5 @@
 """
-S-MAS Phase 2 — Centralised Hyperparameters & Configuration.
+S-MAS Phase 2/3 — Centralised Hyperparameters & Configuration.
 
 All tunable constants live here so that train.py stays clean
 and experiments can be tracked by diffing this single file.
@@ -49,12 +49,13 @@ class ObsConfig:
 
 @dataclass
 class ActionConfig:
-    """Action spaces for the two Phase-2 agents."""
+    """Action spaces for the three agents (Phase 2 + Phase 3)."""
     # Navigation Agent  (continuous)
     nav_dim: int = 4                   # [thrust_x, thrust_y, thrust_z, throttle]
     # Resource Agent    (discrete binary)
     bus_dim: int = 1                   # [deep_sleep]
-    # Mission Agent is Phase 3 — default to payload_on = 0
+    # Mission Agent     (discrete binary, Phase 3)
+    mission_dim: int = 1               # [payload_on]
 
 
 @dataclass
@@ -65,6 +66,18 @@ class RewardConfig:
     w_dod:   float = 2.0               # penalty for Depth of Discharge
     w_fdir:  float = 100.0             # penalty when FDIR intervenes
     w_fatal: float = 1000.0            # massive penalty on terminal failure
+
+
+@dataclass
+class MissionRewardConfig:
+    """Phase 3: Mission-layer reward weights (from pipeline doc §3.3.2)."""
+    w_valid_target: float = 50.0       # +50 for valid target imaged
+    w_saa_penalty: float = 500.0       # -500 for payload ON inside SAA
+    w_idle_power: float = 5.0          # -5 for payload ON when not over target
+    # Valid imaging criteria
+    target_lat_min: float = -60.0      # min latitude for valid target
+    target_lat_max: float = 60.0       # max latitude for valid target
+    target_min_solar_w: float = 10.0   # need sunlight for optical imaging
 
 
 @dataclass

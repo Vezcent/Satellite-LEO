@@ -1,11 +1,13 @@
 """
-S-MAS Phase 2 — Task 2.1 / 2.2
+S-MAS Phase 2/3 — Tasks 2.1 / 2.2 / 3.3
 ctypes bridge to libsmas_engine.dll.
 
 Provides a Gym-like interface:
     env = SatelliteEnv(cfg)
     obs = env.reset()
     obs, reward, done, info = env.step(action_dict)
+
+Phase 3: Supports mission agent action with meta-coordination.
 """
 import ctypes as ct
 import numpy as np
@@ -94,7 +96,7 @@ class SatelliteEnv:
     -----
     >>> env = SatelliteEnv(EnvConfig())
     >>> obs = env.reset()
-    >>> action = {"nav": np.zeros(4), "bus": 0}
+    >>> action = {"nav": np.zeros(4), "bus": 0, "mission": 0}
     >>> obs, reward, done, info = env.step(action)
     """
 
@@ -193,13 +195,21 @@ class SatelliteEnv:
         Parameters
         ----------
         action : dict
-            "nav"  : np.array shape (4,) → [thrust_x, y, z, throttle]
-            "bus"  : int or float        → 0 or 1 (deep_sleep)
+            "nav"     : np.array shape (4,) → [thrust_x, y, z, throttle]
+            "bus"     : int or float        → 0 or 1 (deep_sleep)
+            "mission" : int or float        → 0 or 1 (payload_on, Phase 3)
 
         Returns (state, reward, done, info)
         """
         nav = action.get("nav", np.zeros(4, dtype=np.float32))
         bus = int(action.get("bus", 0))
+        mission = int(action.get("mission", 0))
+
+        # ── Meta-Coordination (Task 3.3) ───────────────────────────
+        # Software-Defined Resiliency: override payload to OFF
+        # when the Resource Agent has triggered deep_sleep.
+        if bus == 1:
+            mission = 0
 
         self._action.version    = 1
         self._action.thrust_x   = float(nav[0])
@@ -207,7 +217,7 @@ class SatelliteEnv:
         self._action.thrust_z   = float(nav[2])
         self._action.throttle   = float(np.clip(nav[3], 0.0, 1.0))
         self._action.deep_sleep = bus
-        self._action.payload_on = 0   # Phase 3 — default OFF
+        self._action.payload_on = mission
 
         self._lib.smas_step(
             self._handle,
@@ -227,6 +237,8 @@ class SatelliteEnv:
             "fdir_mode":   self._state.fdir_mode,
             "done_reason": self._state.done_reason,
             "prev_fdir":   self._prev_fdir,
+            "payload_on":  mission,         # actual value sent (post-override)
+            "meta_override": bus == 1 and int(action.get("mission", 0)) == 1,
         }
 
         self._prev_fdir = self._state.fdir_mode
