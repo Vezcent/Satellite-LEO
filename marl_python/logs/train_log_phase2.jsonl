@@ -1,0 +1,1 @@
+{"episode": 1, "phase": 2, "steps": 17280, "total_steps": 17280, "reward": -4043.79, "soc_final": 96.8, "alt_final": 570.2, "fdir": 0, "done_reason": 0, "policy_loss": 0.01436, "value_loss": 36.45934, "entropy": 6.9543, "sps": 334.0, "time_s": 51.7}

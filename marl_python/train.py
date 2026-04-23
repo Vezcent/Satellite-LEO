@@ -20,6 +20,18 @@ import argparse
 import numpy as np
 import torch
 
+
+class NumpyEncoder(json.JSONEncoder):
+    """Convert numpy scalars to native Python types for JSON serialization."""
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
 # Ensure we can import sibling modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -234,7 +246,7 @@ def train(train_cfg: TrainConfig,
                 "valid_targets":    ep_valid_targets,
                 "saa_violations":   ep_saa_violations,
             })
-        log_file.write(json.dumps(log_entry) + "\n")
+        log_file.write(json.dumps(log_entry, cls=NumpyEncoder) + "\n")
         log_file.flush()
 
         # Print progress
