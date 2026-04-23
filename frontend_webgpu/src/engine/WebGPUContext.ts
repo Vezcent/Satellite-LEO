@@ -214,7 +214,7 @@ export class WebGPUContext implements IRenderContext {
     const earthUniformData = new Float32Array(36);
     earthUniformData.set(earthModelView, 0);
     earthUniformData.set(this.projMatrix, 16);
-    earthUniformData.set([0.1, 0.2, 0.4, 1.0], 32); // color
+    earthUniformData.set([0.35, 0.50, 0.90, 1.0], 32); // Brighter cyan-blue wireframe
     this.device.queue.writeBuffer(this.earthUniformBuffer, 0, earthUniformData);
 
     // Update Sat Uniforms

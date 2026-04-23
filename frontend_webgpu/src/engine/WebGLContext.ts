@@ -172,7 +172,7 @@ export class WebGLContext implements IRenderContext {
     // Rotate earth slowly
     mat4.rotateY(earthModelView, earthModelView, time * 0.00005);
     gl.uniformMatrix4fv(this.uModelView, false, earthModelView);
-    gl.uniform3f(this.uColor, 0.05, 0.1, 0.2); // Dark blue
+    gl.uniform3f(this.uColor, 0.15, 0.35, 0.6); // Brighter cyan-blue wireframe
 
     gl.bindVertexArray(this.vaoEarth);
     // Use line loop for cool wireframe aesthetic

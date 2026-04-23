@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 export const FdirMode = {
   Nominal: 0,
@@ -38,18 +38,53 @@ export interface TelemetryData {
   fdirOverridden: boolean;
 }
 
+const RECONNECT_INTERVAL_MS = 2000;  // Retry every 2 seconds
+const MAX_RECONNECT_ATTEMPTS = 999;  // Keep trying indefinitely
+
 export function useTelemetry(url: string = 'ws://localhost:8765') {
   const [data, setData] = useState<TelemetryData | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attemptRef = useRef(0);
+  const mountedRef = useRef(true);
 
-  useEffect(() => {
+  const connect = useCallback(() => {
+    if (!mountedRef.current) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+
+    // Clean up previous socket
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch { /* ignore */ }
+      wsRef.current = null;
+    }
+
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
+    ws.onopen = () => {
+      setConnected(true);
+      attemptRef.current = 0;
+      console.log('[Telemetry] Connected to', url);
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      wsRef.current = null;
+
+      // Auto-reconnect
+      if (mountedRef.current && attemptRef.current < MAX_RECONNECT_ATTEMPTS) {
+        attemptRef.current++;
+        reconnectTimerRef.current = setTimeout(() => {
+          connect();
+        }, RECONNECT_INTERVAL_MS);
+      }
+    };
+
+    ws.onerror = () => {
+      // onclose will fire after this, which handles reconnect
+    };
     
     ws.onmessage = (event) => {
       if (!(event.data instanceof ArrayBuffer)) return;
@@ -105,11 +140,22 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
         deepSleep, payloadOn, fdirOverridden
       });
     };
+  }, [url]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    connect();
 
     return () => {
-      ws.close();
+      mountedRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
-  }, [url]);
+  }, [connect]);
 
   return { data, connected };
 }

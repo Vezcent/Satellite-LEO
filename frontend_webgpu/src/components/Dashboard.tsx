@@ -1,7 +1,25 @@
 import { useEffect, useRef } from 'react';
 import { useTelemetry, FdirMode } from '../lib/telemetry';
-import { Activity, Battery, ShieldAlert, Cpu, Radio, Orbit, ThermometerSun } from 'lucide-react';
+import { Activity, Battery, ShieldAlert, Cpu, Radio, Orbit, ThermometerSun, Clock, Skull } from 'lucide-react';
 import Renderer from '../engine/Renderer';
+import '../App.css';
+
+/** Convert simulation seconds to a human-readable lifetime string */
+function formatLifetime(totalSeconds: number): string {
+  const days = Math.floor(totalSeconds / 86400);
+  const years = Math.floor(days / 365);
+  const remainingDays = days - years * 365;
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (years > 0) {
+    return `${years}y ${remainingDays}d ${hours}h`;
+  } else if (days > 0) {
+    return `${days}d ${hours}h ${minutes}m`;
+  } else {
+    return `${hours}h ${minutes}m`;
+  }
+}
 
 export default function Dashboard() {
   const { data, connected } = useTelemetry();
@@ -13,15 +31,12 @@ export default function Dashboard() {
       engineRef.current = new Renderer(canvasRef.current);
       engineRef.current.init().catch(console.error);
     }
-    
-    // Cleanup
     return () => {
       engineRef.current?.dispose();
       engineRef.current = null;
     };
   }, []);
 
-  // Update renderer with latest telemetry
   useEffect(() => {
     if (engineRef.current && data) {
       engineRef.current.updateTelemetry(data);
@@ -50,88 +65,138 @@ export default function Dashboard() {
 
   const fdirLabel = getFdirLabel(data?.fdirMode);
   const isAlert = data?.fdirMode === FdirMode.Safe || data?.fdirMode === FdirMode.Degraded;
+  const isDead = data?.isDone === true;
+  const lifetime = data ? formatLifetime(data.simTimeS) : '---';
 
   return (
     <>
       <canvas ref={canvasRef} id="canvas-container" />
       
-      <div className="absolute inset-0 pointer-events-none p-6 flex flex-col justify-between" style={{ zIndex: 10 }}>
+      <div className="hud-overlay">
         
-        {/* Top Bar */}
-        <header className="flex justify-between items-start">
-          <div className="glass-panel p-4 w-72 pointer-events-auto">
-            <h1 className="text-xl font-bold tracking-wider text-gradient mb-1">S-MAS OPS</h1>
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-              {connected ? 'LIVE TELEMETRY' : 'DISCONNECTED'}
+        {/* ── Top Bar ── */}
+        <div className="hud-header">
+          {/* Left: Title + Connection */}
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+            <div className="glass-panel" style={{ padding: '1rem 1.25rem', minWidth: '16rem' }}>
+              <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '0.1em', marginBottom: '0.25rem' }} className="text-gradient">
+                S-MAS OPS
+              </h1>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                <span style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  backgroundColor: connected ? '#22C55E' : '#EF4444',
+                  display: 'inline-block'
+                }} />
+                {connected ? 'LIVE TELEMETRY' : 'DISCONNECTED'}
+              </div>
+            </div>
+
+            {/* Lifetime Counter */}
+            <div className="glass-panel" style={{
+              padding: '1rem 1.25rem',
+              minWidth: '14rem',
+              borderColor: isDead ? 'var(--color-safe)' : 'rgba(59, 130, 246, 0.3)'
+            }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', marginBottom: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                {isDead ? <Skull size={12} style={{ color: '#EF4444' }} /> : <Clock size={12} />}
+                {isDead ? 'SATELLITE DECEASED' : 'MISSION LIFETIME'}
+              </div>
+              <div style={{
+                fontSize: '1.5rem', fontWeight: 700, fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                letterSpacing: '0.05em',
+                color: isDead ? '#EF4444' : '#60A5FA',
+              }}>
+                {lifetime}
+              </div>
+              {isDead && data && (
+                <div style={{ fontSize: '0.7rem', color: '#F87171', marginTop: '0.2rem' }}>
+                  Cause: {data.doneReason === 1 ? 'BATTERY DEPLETED' : data.doneReason === 2 ? 'COMMS LOST >72h' : data.doneReason === 3 ? 'REENTRY <200km' : `CODE ${data.doneReason}`}
+                </div>
+              )}
             </div>
           </div>
           
-          <div className={`glass-panel p-4 flex flex-col items-end pointer-events-auto ${isAlert ? 'pulse-alert' : ''}`} style={{ borderColor: getFdirColor(data?.fdirMode) }}>
-            <div className="text-xs text-gray-400 font-mono mb-1">SYSTEM STATE</div>
-            <div className="text-2xl font-bold tracking-widest" style={{ color: getFdirColor(data?.fdirMode) }}>
+          {/* Right: System State */}
+          <div className={`glass-panel ${isAlert ? 'pulse-alert' : ''}`}
+               style={{
+                 padding: '1rem 1.25rem',
+                 display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+                 borderColor: getFdirColor(data?.fdirMode),
+                 maxWidth: '14rem'
+               }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', marginBottom: '0.25rem' }}>
+              SYSTEM STATE
+            </div>
+            <div style={{
+              fontSize: '1.75rem', fontWeight: 700, letterSpacing: '0.15em',
+              color: getFdirColor(data?.fdirMode)
+            }}>
               {fdirLabel}
             </div>
-            {data?.seuActive && <div className="text-xs text-red-400 mt-1 flex items-center gap-1"><ShieldAlert size={12}/> SEU DETECTED</div>}
+            {data?.seuActive && (
+              <div style={{ fontSize: '0.7rem', color: '#F87171', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <ShieldAlert size={12}/> SEU DETECTED
+              </div>
+            )}
           </div>
-        </header>
+        </div>
 
-        {/* Bottom / Side Stats */}
-        <div className="flex gap-6 pointer-events-auto items-end">
+        {/* ── Bottom Stats ── */}
+        <div className="hud-bottom">
           
           {/* Main Stats Panel */}
-          <div className="glass-panel p-5 w-80 flex flex-col gap-4">
-            
-            <div className="flex justify-between items-center border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2 text-gray-400"><Orbit size={18}/> Altitude</div>
-              <div className="text-xl font-mono">{data ? data.altitudeKm.toFixed(1) : '---'} km</div>
+          <div className="glass-panel" style={{ padding: '1.25rem', width: '20rem' }}>
+            <div className="stat-row">
+              <div className="stat-label"><Orbit size={18}/> Altitude</div>
+              <div className="stat-value">{data ? data.altitudeKm.toFixed(1) : '---'} km</div>
             </div>
-            
-            <div className="flex justify-between items-center border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2 text-gray-400"><Battery size={18}/> SoC</div>
-              <div className="text-xl font-mono" style={{ color: data && data.batterySoc < 0.2 ? 'var(--color-safe)' : 'white' }}>
+            <div className="stat-row">
+              <div className="stat-label"><Battery size={18}/> SoC</div>
+              <div className="stat-value" style={{ color: data && data.batterySoc < 0.2 ? 'var(--color-safe)' : 'white' }}>
                 {data ? (data.batterySoc * 100).toFixed(1) : '---'}%
               </div>
             </div>
-
-            <div className="flex justify-between items-center pb-1">
-              <div className="flex items-center gap-2 text-gray-400"><Activity size={18}/> Velocity</div>
-              <div className="text-lg font-mono">7.6 km/s</div>
+            <div className="stat-row">
+              <div className="stat-label"><Activity size={18}/> Velocity</div>
+              <div className="stat-value" style={{ fontSize: '1.1rem' }}>
+                7.60 km/s
+              </div>
             </div>
-
           </div>
 
           {/* AI / Action Panel */}
-          <div className="glass-panel p-5 flex flex-col gap-4 flex-1 max-w-md">
-            <h3 className="text-sm text-gray-400 font-mono flex items-center gap-2 mb-2"><Cpu size={16}/> AGENT ACTIONS</h3>
-            
-            <div className="grid grid-cols-3 gap-4">
-              <div className="flex flex-col gap-1 bg-black/30 p-3 rounded border border-white/5">
-                <span className="text-xs text-gray-500">THRUST MAG</span>
-                <span className="font-mono text-lg">{data ? data.throttle.toFixed(2) : '0.00'}</span>
+          <div className="glass-panel" style={{ padding: '1.25rem', flex: '1', maxWidth: '28rem' }}>
+            <h3 style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <Cpu size={16}/> AGENT ACTIONS
+            </h3>
+            <div className="action-grid">
+              <div className="action-cell">
+                <span className="label">Thrust Mag</span>
+                <span className="value">{data ? data.throttle.toFixed(2) : '0.00'}</span>
               </div>
-              <div className="flex flex-col gap-1 bg-black/30 p-3 rounded border border-white/5">
-                <span className="text-xs text-gray-500">PAYLOAD</span>
-                <span className={`font-mono text-lg ${data?.payloadOn ? 'text-green-400' : 'text-gray-500'}`}>
+              <div className="action-cell">
+                <span className="label">Payload</span>
+                <span className="value" style={{ color: data?.payloadOn ? '#34D399' : 'var(--color-text-muted)' }}>
                   {data?.payloadOn ? 'ACTIVE' : 'STANDBY'}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 bg-black/30 p-3 rounded border border-white/5">
-                <span className="text-xs text-gray-500">POWER DRAW</span>
-                <span className="font-mono text-lg">{data ? data.powerDrawW.toFixed(0) : '0'} W</span>
+              <div className="action-cell">
+                <span className="label">Power Draw</span>
+                <span className="value">{data ? data.powerDrawW.toFixed(0) : '0'} W</span>
               </div>
             </div>
           </div>
           
           {/* Environment Panel */}
-          <div className="glass-panel p-5 flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-               <ThermometerSun size={20} className={data?.inEclipse ? 'text-gray-500' : 'text-yellow-400'}/>
-               <span className="font-mono">{data?.inEclipse ? 'ECLIPSE' : 'SUNLIGHT'}</span>
+          <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div className="env-row">
+               <ThermometerSun size={20} style={{ color: data?.inEclipse ? 'var(--color-text-muted)' : '#FACC15' }}/>
+               <span>{data?.inEclipse ? 'ECLIPSE' : 'SUNLIGHT'}</span>
             </div>
-            <div className="flex items-center gap-3">
-               <Radio size={20} className={data?.gsVisible ? 'text-green-400' : 'text-gray-500'}/>
-               <span className="font-mono">{data?.gsVisible ? 'COMMS UP' : 'LOS'}</span>
+            <div className="env-row">
+               <Radio size={20} style={{ color: data?.gsVisible ? '#34D399' : 'var(--color-text-muted)' }}/>
+               <span>{data?.gsVisible ? 'COMMS UP' : 'LOS'}</span>
             </div>
           </div>
 
