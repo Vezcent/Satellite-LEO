@@ -1,0 +1,2 @@
+step,sim_time_s,altitude_km,latitude_deg,longitude_deg,battery_soc,solar_power_w,power_draw_w,in_eclipse,in_saa,fdir_mode,seu_active,gs_visible,panel_eff,drag_coeff,thrust_x,thrust_y,thrust_z,throttle,deep_sleep,payload_on,fdir_overridden,is_done,done_reason
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

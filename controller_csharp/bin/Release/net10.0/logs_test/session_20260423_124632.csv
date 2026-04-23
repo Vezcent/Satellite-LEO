@@ -1,0 +1,2 @@
+step,sim_time_s,altitude_km,latitude_deg,longitude_deg,battery_soc,solar_power_w,power_draw_w,in_eclipse,in_saa,fdir_mode,seu_active,gs_visible,panel_eff,drag_coeff,thrust_x,thrust_y,thrust_z,throttle,deep_sleep,payload_on,fdir_overridden,is_done,done_reason
+1,255,576.8377962668992,15.403187658433879,-70.14710987189443,0.9751396283324375,0,30,1,0,0,0,0,1,2.1915463176871874,0,0,0,0,0,0,0,0,0

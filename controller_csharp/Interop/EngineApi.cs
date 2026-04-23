@@ -23,12 +23,14 @@ public static class EngineApi
     /// </summary>
     /// <param name="dataDir">Path to the preprocessed-data directory.</param>
     /// <param name="seed">Random seed for stochastic modules.</param>
+    /// <param name="densityMultiplier">Atmospheric density scaling factor (default 1.0).</param>
     /// <returns>Opaque engine handle (IntPtr.Zero on failure).</returns>
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl,
                CharSet = CharSet.Ansi)]
     public static extern IntPtr smas_create(
         [MarshalAs(UnmanagedType.LPStr)] string dataDir,
-        ulong seed);
+        ulong seed,
+        double densityMultiplier = 1.0);
 
     /// <summary>
     /// Initialise the engine (load data files).
@@ -76,9 +78,9 @@ public sealed class PhysicsEngine : IDisposable
     private IntPtr _handle;
     private bool _disposed;
 
-    public PhysicsEngine(string dataDir, ulong seed = 42)
+    public PhysicsEngine(string dataDir, ulong seed = 42, double densityMultiplier = 0.1)
     {
-        _handle = EngineApi.smas_create(dataDir, seed);
+        _handle = EngineApi.smas_create(dataDir, seed, densityMultiplier);
         if (_handle == IntPtr.Zero)
             throw new InvalidOperationException("smas_create returned NULL — check data directory.");
     }

@@ -4,7 +4,6 @@ E:\Satellite LEO\controller_csharp\obj\Release\net10.0\SmasController.AssemblyIn
 E:\Satellite LEO\controller_csharp\obj\Release\net10.0\SmasController.AssemblyInfo.cs
 E:\Satellite LEO\controller_csharp\obj\Release\net10.0\SmasController.csproj.CoreCompileInputs.cache
 E:\Satellite LEO\controller_csharp\obj\Release\net10.0\SmasController.sourcelink.json
-E:\Satellite LEO\controller_csharp\bin\Release\net10.0\smas_engine.dll
 E:\Satellite LEO\controller_csharp\bin\Release\net10.0\models\smas_bus.onnx
 E:\Satellite LEO\controller_csharp\bin\Release\net10.0\models\smas_mission.onnx
 E:\Satellite LEO\controller_csharp\bin\Release\net10.0\models\smas_nav.onnx
@@ -41,3 +40,4 @@ E:\Satellite LEO\controller_csharp\obj\Release\net10.0\refint\SmasController.dll
 E:\Satellite LEO\controller_csharp\obj\Release\net10.0\SmasController.pdb
 E:\Satellite LEO\controller_csharp\obj\Release\net10.0\SmasController.genruntimeconfig.cache
 E:\Satellite LEO\controller_csharp\obj\Release\net10.0\ref\SmasController.dll
+E:\Satellite LEO\controller_csharp\bin\Release\net10.0\smas_engine.dll

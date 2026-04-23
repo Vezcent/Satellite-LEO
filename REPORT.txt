@@ -1,0 +1,321 @@
+================================================================================
+         S-MAS: SATELLITE MULTI-AGENT SYSTEM FOR LIFETIME OPTIMIZATION
+                         TECHNICAL REPORT (ENGLISH)
+================================================================================
+  Author:  S-MAS Development Team
+  Date:    2026-04-23
+  Version: 1.0
+  Status:  All 7 Phases Complete (Phase 0 - Phase 6)
+  Codebase: 58 source files, ~6,500 lines of code, 4 languages
+================================================================================
+
+1. ABSTRACT
+================================================================================
+
+  S-MAS is a high-fidelity satellite operational digital twin that uses
+  Multi-Agent Reinforcement Learning (MARL) to autonomously optimize the
+  orbital lifetime of a Low Earth Orbit (LEO) microsatellite. The system
+  models the ESA PROBA-1 spacecraft (NORAD 26957) at ~600 km altitude,
+  integrating real historical space weather data (2001-2020), radiation
+  hazard maps, and a validated atmospheric drag model.
+
+  The platform spans four programming languages across a six-phase pipeline:
+  C++ (physics engine), Python (MARL training), C# (operational controller),
+  and TypeScript/React (WebGPU 3D dashboard). Three heterogeneous AI agents
+  (Navigation, Bus Management, Mission) coordinate under a rule-based FDIR
+  safety governor using the MAPPO algorithm with Centralized Training and
+  Decentralized Execution (CTDE).
+
+  The physics engine was validated against 30 days of real PROBA-1 TLE data
+  using SGP4 propagation, achieving an MSE of 336.5 km^2 after calibration.
+
+2. SYSTEM ARCHITECTURE
+================================================================================
+
+  2.1 Technology Stack
+
+    Layer              | Technology        | Purpose
+    -------------------|-------------------|----------------------------------
+    Physics Core       | C++ 17            | RK4 integrator, J2, drag, FDIR
+    MARL Training      | Python 3.10       | MAPPO, PyTorch, ctypes bridge
+    Operations Bridge  | C# / .NET 10      | ONNX inference, WebSocket server
+    Visualization      | React + WebGPU    | Real-time 3D telemetry dashboard
+    Model Exchange     | ONNX Runtime      | Cross-language AI deployment
+
+  2.2 Data Flow
+
+    [C++ Engine DLL] <--ctypes--> [Python MARL Training]
+         |                              |
+         | P/Invoke                     | export ONNX
+         v                              v
+    [C# Controller] <--loads-- [ONNX Models (nav/bus/mission)]
+         |
+         | WebSocket (binary)
+         v
+    [React WebGPU Dashboard]
+
+  2.3 Global Constants
+
+    Parameter             | Value
+    ----------------------|------------------
+    Integration timestep  | dt = 5.0 seconds
+    Target altitude       | 600 km (SSO)
+    Failure threshold     | < 200 km altitude
+    Satellite mass        | 94 kg (PROBA-1)
+    Aero cross-section    | 0.36 m^2
+    Simulation resolution | 17,280 steps/day
+
+3. PHASE 0 & 0.5: DATA PIPELINE
+================================================================================
+
+  Raw datasets processed to < 50 MB total:
+
+    Dataset                    | Source       | Raw     | Processed
+    ---------------------------|-------------|---------|----------
+    Space Weather (F10.7, Ap)  | NOAA/SWPC   | 12.8 MB | 4.2 MB
+    SAA Radiation Heatmap      | SPENVIS     | 971 KB  | 221 KB
+    PROBA-1 TLE History        | Space-Track | 3.1 MB  | 142 B (initial)
+    Ground Station Coords      | Manual      | 206 B   | 557 B
+
+  Key design decision: Atmospheric density is computed at runtime using
+  NRLMSISE-00 instead of storing precomputed grids, eliminating terabytes
+  of atmospheric data.
+
+4. PHASE 1: C++ PHYSICS ENGINE
+================================================================================
+
+  4.1 Orbital Mechanics
+
+    - 4th-order Runge-Kutta (RK4) integrator at dt = 5.0 s
+    - Earth gravity: point-mass + J2 oblateness perturbation
+    - Aerodynamic drag: F_D = -0.5 * rho * Cd * A * v^2 * v_hat
+    - Atmosphere co-rotation correction: v_rel = v - (omega x r)
+    - Thrust: continuous 3D vector with throttle [0, 1]
+
+  4.2 NRLMSISE-00 Atmospheric Model (Simplified)
+
+    - Exospheric temperature: T_inf = f(F10.7, F10.7_avg, Ap)
+    - Bates-Walker temperature profile: T(h) = T_inf - (T_inf - T_120) * exp(-sigma * dh)
+    - Diffusive equilibrium density with diurnal and latitudinal modulation
+    - Calibrated density_multiplier = 0.1 (validated against real TLE data)
+
+  4.3 Subsystems Modeled
+
+    - SatelliteBus: GaAs solar arrays (~90 W), Li-ion battery with Arrhenius
+      degradation, eclipse/sunlight power cycling
+    - Stochastic layer: sensor noise, actuator delay (1-3 steps), actuator
+      error (+/-5%), epistemic Cd drift (random walk)
+    - SEU generator: probabilistic single-event upsets during SAA transit
+    - Ground station visibility: spherical LoS with 5-degree elevation mask
+
+  4.4 C API (DLL Export)
+
+    Function              | Signature
+    ----------------------|---------------------------------------------
+    smas_create           | (data_dir, seed, density_mult) -> handle
+    smas_init             | (handle) -> int
+    smas_reset            | (handle) -> void
+    smas_step             | (handle, ActionPacket*, StatePacket*) -> void
+    smas_destroy          | (handle) -> void
+
+    StatePacket: 184 bytes, packed (version 1)
+    ActionPacket: 19 bytes, packed (version 1)
+
+5. PHASE 2: CORE MARL FRAMEWORK
+================================================================================
+
+  5.1 Algorithm: MAPPO (Multi-Agent PPO)
+
+    - Shared policy architecture (all agents share weights)
+    - Centralized Training, Decentralized Execution (CTDE)
+    - GAE (lambda = 0.95, gamma = 0.99) for advantage estimation
+    - Clip ratio: 0.2, entropy coefficient: 0.01
+
+  5.2 Observation Space (29 dimensions)
+
+    Category       | Features                              | Dims
+    ---------------|---------------------------------------|-----
+    Orbital        | alt, lat, lon, |v|, vx_norm, vy_norm  | 6
+    Power          | SoC, capacity_frac, solar_w, draw_w   | 4
+    Environment    | rho_log, flux10_log, flux30_log, ecl, saa | 5
+    Communication  | gs_visible, time_since_contact_norm   | 2
+    FDIR           | one-hot [NOM, DEG, SAFE, REC]         | 4
+    Degradation    | panel_eff, cd_norm, cycles_norm       | 3
+    SEU            | seu_active                            | 1
+    Lag features   | kp_3h, f107_3h, kp_6h, f107_6h       | 4
+
+  5.3 Agent Action Spaces
+
+    Agent       | Action Type | Space
+    ------------|-------------|-------------------------------
+    Navigation  | Continuous  | thrust_xyz [-1,1]^3 + throttle [0,1]
+    Bus Manager | Discrete    | deep_sleep {0, 1}
+    Mission     | Discrete    | payload_on {0, 1}
+
+  5.4 Survival Reward
+
+    R_t = 1.0 (alive) - 5.0 * dV_used - 2.0 * DoD - 1000.0 * P_fatal
+
+6. PHASE 3: MISSION LAYER
+================================================================================
+
+  6.1 Mission Agent (CHRIS Instrument Control)
+
+    - Toggles optical payload ON/OFF based on orbital position
+    - Power draw penalty when active (accelerates discharge)
+    - +50.0 reward for valid target imaging
+    - -500.0 penalty for payload ON inside SAA boundaries
+
+  6.2 Meta-Coordination
+
+    - If Bus agent activates deep_sleep, payload is forced OFF
+    - FDIR governor overrides all agents during DEGRADED/SAFE modes
+
+  6.3 FDIR State Machine
+
+    State      | SoC Trigger | AI Control
+    -----------|-------------|----------------------------------
+    NOMINAL    | > 20%       | Full autonomy
+    DEGRADED   | < 20%       | Payload OFF, thrust capped at 30%
+    SAFE       | < 10%       | All overridden, deep sleep forced
+    RECOVERY   | > 15%       | Payload OFF, transitioning back
+
+7. PHASE 4: C# CONTROLLER
+================================================================================
+
+  7.1 Architecture
+
+    - .NET 10.0 console application
+    - P/Invoke bindings to smas_engine.dll with [StructLayout(Pack=1)]
+    - ONNX Runtime inference for 3 agent models (nav, bus, mission)
+    - Async WebSocket binary server on ws://localhost:8765
+
+  7.2 Binary Telemetry Protocol
+
+    [Version(1B) | Sequence(4B) | PayloadLen(4B) | Payload(98B) | CRC32(4B)]
+
+    - Circular buffer (32 frames) for backpressure management
+    - Stochastic network impairment (delay, jitter, packet drops)
+    - CSV logger with offline replay engine
+
+  7.3 Observation Normalizer
+
+    - Exact C# port of Python's observation.py
+    - 29-dim normalized vector (MinMax, Robust, log10, one-hot)
+
+8. PHASE 5: WEBGPU DASHBOARD
+================================================================================
+
+  8.1 Technology: Vite + React 18 + TypeScript
+
+  8.2 Rendering Engine
+
+    - Primary: WebGPU with WGSL shaders (instanced rendering)
+    - Fallback: WebGL2 with GLSL shaders (automatic detection)
+    - Both render wireframe Earth + FDIR-colored satellite
+    - Coordinate transform: Lat/Lon/Alt -> ECEF (X, Y, Z)
+
+  8.3 Telemetry Decoder (useTelemetry hook)
+
+    - Zero-allocation DataView parser
+    - Directly decodes binary WebSocket stream to React state
+    - No JSON parsing overhead
+
+  8.4 HUD Design
+
+    - Deep-space glassmorphism theme (backdrop blur, dark gradients)
+    - Dynamic FDIR state indicators with pulse animations
+    - Real-time SoC, altitude, mission clock, action readouts
+
+9. PHASE 6: VALIDATION WITH REAL TLE DATA
+================================================================================
+
+  9.1 Methodology
+
+    - Parsed 43,000+ historical PROBA-1 TLEs from Space-Track
+    - Used Python sgp4 library to establish ground-truth altitude curve
+    - Ran S-MAS engine (zero thrust) for equivalent 30-day window
+    - Compared simulated vs real decay profiles
+
+  9.2 Density Multiplier Calibration
+
+    Multiplier | MSE (km^2)
+    -----------|-----------
+    0.10x      | 336.5  <-- BEST (set as default)
+    0.25x      | 438.4
+    0.50x      | 619.3
+    0.75x      | 860.5
+    1.00x      | 1145.3
+
+  9.3 Conclusion
+
+    The simplified NRLMSISE-00 model overestimates thermospheric density
+    by approximately 10x at 600 km. After calibration (multiplier = 0.1),
+    the numerical integrator tracks real PROBA-1 orbital decay within
+    acceptable bounds (RMSE ~18.3 km over 30 days).
+
+10. RESULTS & METRICS
+================================================================================
+
+  10.1 Engine Performance (24-hour run, smas_test.exe)
+
+    Metric              | Value
+    --------------------|------------------
+    Final Altitude      | 574.73 km
+    Battery SoC         | 90.79%
+    Panel Efficiency    | 99.54%
+    Drag Coefficient    | 2.35 (drifted)
+    Charge Cycles       | 16
+    FDIR Mode           | 0 (NOMINAL)
+    Eclipse Passes      | ~15
+
+  10.2 Training Results (Phase 2, 5000 steps test run)
+
+    Metric              | Value
+    --------------------|------------------
+    Episode Reward      | -4043.8
+    Final SoC           | 96.8%
+    Final Altitude      | 570.2 km
+    FDIR Mode           | 0 (NOMINAL)
+    Policy Loss         | 0.0144
+    Value Loss          | 36.4593
+
+  10.3 Build Verification
+
+    Component           | Status
+    --------------------|--------
+    C++ Engine (MSVC)   | PASS (0 errors, 2 warnings)
+    Python ctypes ABI   | PASS (State=184B, Action=19B)
+    C# Integration      | PASS (10/10 tests)
+    Frontend Build      | PASS (npm run build, 0 errors)
+    TLE Validation      | PASS (MSE=336.5)
+
+11. KNOWN LIMITATIONS
+================================================================================
+
+  1. Atmospheric model is a simplified NRLMSISE-00 approximation, not the
+     full empirical model. Requires calibration multiplier.
+  2. Training convergence requires substantial compute (>1M steps for
+     meaningful policy improvement).
+  3. Single-satellite simulation. Swarm scaling (N>1) requires extending
+     the observation space and action coordination protocol.
+  4. WebGPU support requires modern browsers (Chrome/Edge 113+).
+  5. The C++ engine does not include SGP4 propagation internally; it uses
+     Keplerian initialization + numerical RK4 integration.
+
+12. REFERENCES
+================================================================================
+
+  [1] Picone, J.M. et al., "NRLMSISE-00 empirical model of the atmosphere",
+      J. Geophys. Res., 2002.
+  [2] Yu, C. et al., "The Surprising Effectiveness of PPO in Cooperative
+      Multi-Agent Games", NeurIPS 2022.
+  [3] Vallado, D.A., "Fundamentals of Astrodynamics and Applications",
+      4th ed., 2013.
+  [4] ESA PROBA-1 Mission: https://earth.esa.int/eogateway/missions/proba-1
+  [5] ONNX Runtime: https://onnxruntime.ai/
+  [6] WebGPU Specification: https://www.w3.org/TR/webgpu/
+
+================================================================================
+                           END OF ENGLISH REPORT
+================================================================================

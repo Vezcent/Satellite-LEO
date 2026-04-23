@@ -14,10 +14,16 @@
 
   <!-- Copy the C++ engine DLL to output so P/Invoke can find it -->
   <ItemGroup>
+    <!-- NMake build: DLL is directly in build\ -->
+    <None Include="..\backend_cpp\build\smas_engine.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="smas_engine.dll"
+          Condition="Exists('..\backend_cpp\build\smas_engine.dll')" />
+    <!-- Visual Studio build: DLL is in build\Release\ -->
     <None Include="..\backend_cpp\build\Release\smas_engine.dll"
           CopyToOutputDirectory="PreserveNewest"
           Link="smas_engine.dll"
-          Condition="Exists('..\backend_cpp\build\Release\smas_engine.dll')" />
+          Condition="!Exists('..\backend_cpp\build\smas_engine.dll') And Exists('..\backend_cpp\build\Release\smas_engine.dll')" />
   </ItemGroup>
 
   <!-- Copy ONNX models to output -->

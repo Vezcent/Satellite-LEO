@@ -76,9 +76,9 @@
   Export trained models to ONNX (required for C# controller):
     python export_onnx.py --checkpoint checkpoints\mappo_phase3_best.pt
 
-  ONNX models saved to: marl_python\onnx_export\
+  ONNX models saved to: onnx_export\
   Copy them to the C# controller:
-    Copy-Item marl_python\onnx_export\*.onnx controller_csharp\models\
+    Copy-Item onnx_export\*.onnx ..\controller_csharp\models\
 
 ================================================================================
   STEP 3 -- RUN THE C# CONTROLLER  (FDIR + ONNX + WebSocket Server)
