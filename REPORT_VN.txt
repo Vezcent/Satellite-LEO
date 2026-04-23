@@ -258,7 +258,7 @@
     Chi so              | Gia tri
     --------------------|------------------
     Thoi gian mo phong  | 240,0 gio (10 ngay)
-    Do cao cuoi         | 1.137,74 km
+    Do cao cuoi         | 626,29 km
     SoC cuoi            | 99,00%
     Che do FDIR         | NOMINAL
     Chu ky nap          | 147
