@@ -120,8 +120,8 @@ class SatelliteEnv:
             )
         self._lib = ct.CDLL(str(dll_path))
 
-        # smas_create(data_dir, seed) -> void*
-        self._lib.smas_create.argtypes = [ct.c_char_p, ct.c_ulonglong]
+        # smas_create(data_dir, seed, density_multiplier) -> void*
+        self._lib.smas_create.argtypes = [ct.c_char_p, ct.c_ulonglong, ct.c_double]
         self._lib.smas_create.restype  = ct.c_void_p
         # smas_init(engine) -> int
         self._lib.smas_init.argtypes = [ct.c_void_p]
@@ -146,7 +146,7 @@ class SatelliteEnv:
 
     def _create_engine(self):
         data_dir = self.cfg.data_dir.encode("utf-8")
-        self._handle = self._lib.smas_create(data_dir, self.cfg.seed)
+        self._handle = self._lib.smas_create(data_dir, self.cfg.seed, ct.c_double(self.cfg.density_multiplier))
         if not self._handle:
             raise RuntimeError("smas_create returned NULL")
 

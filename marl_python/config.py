@@ -17,11 +17,12 @@ PROJECT_ROOT = _HERE.parent
 class EnvConfig:
     """Parameters for the C++ physics engine wrapper."""
     data_dir: str = str(PROJECT_ROOT / "preprocessed-data")
-    dll_path: str = str(PROJECT_ROOT / "backend_cpp" / "build" / "Release" / "smas_engine.dll")
+    dll_path: str = str(PROJECT_ROOT / "backend_cpp" / "build" / "smas_engine.dll")
     seed: int = 42
     dt: float = 5.0                     # immutable physics step (seconds)
     max_steps_per_episode: int = 17_280  # ~1 day  (86 400 / 5)
     num_envs: int = 4                   # parallel environments for rollout
+    density_multiplier: float = 0.1     # atmospheric density multiplier
 
 
 @dataclass

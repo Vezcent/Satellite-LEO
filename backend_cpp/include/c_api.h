@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
 // Create a simulation engine. Returns opaque handle.
-SMAS_API void* smas_create(const char* data_dir, unsigned long long seed);
+SMAS_API void* smas_create(const char* data_dir, unsigned long long seed, double density_multiplier);
 
 // Initialise (load data). Returns 0 on success, -1 on failure.
 SMAS_API int smas_init(void* engine);

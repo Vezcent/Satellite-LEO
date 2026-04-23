@@ -198,7 +198,7 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     // Atmospheric density
     double rho = atmosphere_.density(geo.altitude_km, geo.latitude_deg,
                                       lst, weather.f107, weather.f107,
-                                      weather.ap);
+                                      weather.ap) * cfg_.density_multiplier;
 
     // SAA flux
     SAAFluxPoint flux = saa_.lookup(geo.latitude_deg, geo.longitude_deg);

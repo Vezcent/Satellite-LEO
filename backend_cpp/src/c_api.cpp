@@ -9,10 +9,11 @@
 extern "C" {
 #endif
 
-SMAS_API void* smas_create(const char* data_dir, unsigned long long seed) {
+SMAS_API void* smas_create(const char* data_dir, unsigned long long seed, double density_multiplier) {
     smas::EngineConfig cfg;
     cfg.data_dir = data_dir;
     cfg.seed     = seed;
+    cfg.density_multiplier = density_multiplier;
     return new smas::SimulationEngine(cfg);
 }
 

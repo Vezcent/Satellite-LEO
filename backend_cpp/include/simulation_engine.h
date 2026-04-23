@@ -24,6 +24,7 @@ struct EngineConfig {
     bool        enable_drift  = true;
     bool        enable_seu    = true;
     bool        enable_delay  = true;
+    double      density_multiplier = 1.0;
 };
 
 class SimulationEngine {
