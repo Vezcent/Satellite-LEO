@@ -89,6 +89,15 @@ class SurvivalReward:
         if done and state.done_reason > 0:
             reward -= self.cfg.w_fatal
 
+        # ── 6. Altitude Maintenance Penalty ────────────────────────
+        #    Forces the AI to stay near the target orbit (e.g. 600km).
+        alt_km = state.altitude_km
+        alt_err = abs(alt_km - self.cfg.target_alt_km)
+        if alt_err > self.cfg.alt_deadband_km:
+            # Penalise linearly for every km outside the deadband
+            penalty = self.cfg.w_alt * (alt_err - self.cfg.alt_deadband_km)
+            reward -= penalty
+
         return reward
 
 

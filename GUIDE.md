@@ -64,7 +64,10 @@ cd ../controller_csharp && dotnet run -c Release -- --data-dir "../preprocessed-
 | `w_dod` | `marl_python/config.py:67` | 2.0 | Penalty for battery depth-of-discharge |
 | `w_fdir` | `marl_python/config.py:68` | 100.0 | Penalty when FDIR overrides agents |
 | `w_fatal` | `marl_python/config.py:69` | 1000.0 | Penalty on terminal failure |
-| `w_valid_target` | `marl_python/config.py:75` | 50.0 | Reward for valid imaging |
+| `w_alt` | `marl_python/config.py:70` | 10.0 | Penalty for altitude deviation |
+| `target_alt_km` | `marl_python/config.py:71` | 600.0 | Nominal target altitude |
+| `alt_deadband` | `marl_python/config.py:72` | 10.0 | Tolerance band (±10km) |
+| `w_valid_target` | `marl_python/config.py:76` | 50.0 | Reward for valid imaging |
 | `w_saa_penalty` | `marl_python/config.py:76` | 500.0 | Penalty for payload ON in SAA |
 
 ### Training Hyperparameters

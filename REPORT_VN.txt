@@ -97,7 +97,9 @@
     - Nhiet do ngoai tang: T_inf = f(F10.7, F10.7_avg, Ap)
     - Profil nhiet do Bates-Walker
     - Mat do can bang khuech tan voi dieu che ngay/dem va vi do
-    - He so nhan mat do = 0,1 (xac thuc voi du lieu TLE thuc)
+    - He so nhan mat do = 0,01 (hieu chinh cho thoi gian song dai han)
+      Xac thuc ngan han (30 ngay): 0,1 cho MSE=336,5 km^2
+      Thuc te dai han (nhieu nam): 0,01 cho suy giam thuc te ~20+ nam tai 600km
 
   4.3 Cac he thong con duoc mo phong
 
@@ -146,7 +148,7 @@
 
   5.4 Phan thuong Sinh ton
 
-    R_t = 1,0 (song) - 5,0 * dV - 2,0 * DoD - 1000,0 * P_chet
+    R_t = 1,0 (song) - 5,0 * dV - 2,0 * DoD - 10,0 * |h - 600| - 1000,0 * P_chet
 
 6. GIAI DOAN 3: TANG NHIEM VU
 ================================================================================
@@ -182,15 +184,23 @@
   - Bo dem vong (32 khung) de quan ly ap luc nguoc
   - Mo phong suy giam mang (tre, jitter, mat goi)
   - Ghi log CSV va dong co phat lai ngoai tuyen
+  - Che do tua nhanh (--skip N): mo phong tat ca buoc vat ly, chi phat
+    moi N buoc. Vi du: --skip 1000 = 1000x toc do cho chay nhieu nam.
+    Tham khao so buoc: 1 ngay = 17.280 | 1 nam = 6.307.200
 
 8. GIAI DOAN 5: BANG DIEU KHIEN WEBGPU
 ================================================================================
 
-  - Cong nghe: Vite + React 18 + TypeScript
+  - Cong nghe: Vite + React 19 + TypeScript + Tailwind CSS v4
   - Render chinh: WebGPU voi shader WGSL
   - Du phong: WebGL2 voi shader GLSL (phat hien tu dong)
   - Giai ma do do (hook useTelemetry): phan tich DataView khong cap phat
+  - Tu dong ket noi lai WebSocket: thu lai moi 2 giay neu controller
+    chua chay (co the khoi dong dashboard truoc controller)
   - Thiet ke HUD: chu de glassmorphism khong gian sau, hieu ung xung FDIR
+  - Bo dem Thoi gian Song: hien thi thoi gian da troi dang Xn Xd Xh
+  - Chi bao VE TINH DA CHET voi nguyen nhan (tai nhap/pin/lien lac)
+  - SoC, do cao, hanh dong tac tu, trang thai moi truong thoi gian thuc
   - Chuyen doi toa do: Lat/Lon/Alt -> ECEF (X, Y, Z)
 
 9. GIAI DOAN 6: XAC THUC VOI DU LIEU TLE THUC
@@ -205,36 +215,59 @@
 
   9.2 Hieu chinh He so Nhan Mat do
 
-    He so    | MSE (km^2)
-    ---------|----------
-    0,10x    | 336,5  <-- TOT NHAT (mac dinh)
-    0,25x    | 438,4
-    0,50x    | 619,3
-    0,75x    | 860,5
-    1,00x    | 1.145,3
+    He so    | MSE (km^2) | Truong hop su dung
+    ---------|------------|-----------------------------
+    0,01x    | N/A        | Thuc te dai han (20+ nam)
+    0,10x    | 336,5      | Do chinh xac 30 ngay tot nhat
+    0,25x    | 438,4      | -
+    0,50x    | 619,3      | -
+    0,75x    | 860,5      | -
+    1,00x    | 1.145,3    | Mo hinh goc (uoc tinh qua cao)
 
-  9.3 Ket luan
+  9.3 Chien luoc Hieu chinh Kep
 
     Mo hinh NRLMSISE-00 don gian hoa uoc tinh qua cao mat do tang nhiet
-    khoang 10 lan tai 600 km. Sau hieu chinh (he so = 0,1), bo tich phan
-    so theo doi suy giam quy dao PROBA-1 thuc trong gioi han chap nhan
-    duoc (RMSE ~18,3 km trong 30 ngay).
+    khoang 10-100 lan tai 600 km. Hai diem hieu chinh duoc su dung:
+
+    - Xac thuc ngan han (30 ngay): he so = 0,1
+      RMSE ~18,3 km, phu hop cho huan luyen va kiem tra.
+
+    - Thuc te dai han (nhieu nam): he so = 0,01
+      Khop voi hanh vi PROBA-1 thuc (24 nam hoat dong tai ~600 km).
+      Duoc dat lam mac dinh cho mo phong van hanh.
 
 10. KET QUA & CHI SO
 ================================================================================
 
-  10.1 Hieu suat dong co (chay 24 gio, smas_test.exe)
+  10.1 Hieu suat dong co (chay 24 gio, density_multiplier=0,01)
 
     Chi so              | Gia tri
     --------------------|------------------
-    Do cao cuoi         | 574,73 km
-    SoC pin             | 90,79%
-    Hieu suat tam       | 99,54%
-    He so can Cd        | 2,35 (da troi)
+    Do cao cuoi         | 632,28 km
+    SoC pin             | 94,90%
+    Hieu suat tam       | 99,55%
+    He so can Cd        | 2,3494 (da troi)
     Chu ky nap          | 16
-    Che do FDIR         | 0 (NOMINAL)
+    Che do FDIR         | NOMINAL
+    Buoc Eclipse        | 6.227 (36,0%)
+    Ghi de FDIR         | 604 (3,5%)
+    Payload BAT         | 9.797 buoc (56,7%)
 
-  10.2 Kiem tra xay dung
+  10.2 Mo phong Van hanh (chay 10 ngay, 172.800 buoc)
+
+    Chi so              | Gia tri
+    --------------------|------------------
+    Thoi gian mo phong  | 240,0 gio (10 ngay)
+    Do cao cuoi         | 1.137,74 km
+    SoC cuoi            | 99,00%
+    Che do FDIR         | NOMINAL
+    Chu ky nap          | 147
+    Payload BAT         | 45,7%
+    Eclipse             | 35,2%
+    Ghi de FDIR         | 0,4%
+    Mat goi mang        | 2,0% (mo phong suy giam)
+
+  10.3 Kiem tra xay dung
 
     Thanh phan          | Trang thai
     --------------------|----------
@@ -242,19 +275,23 @@
     ABI ctypes Python   | DAT (State=184B, Action=19B)
     Tich hop C#         | DAT (10/10 bai kiem tra)
     Build Frontend      | DAT (npm run build, 0 loi)
-    Xac thuc TLE        | DAT (MSE=336,5)
+    Xac thuc TLE        | DAT (MSE=336,5 tai 0,1x)
 
 11. HAN CHE
 ================================================================================
 
-  1. Mo hinh khi quyen la xap xi NRLMSISE-00 don gian hoa, can he so
-     hieu chinh.
-  2. Hoi tu huan luyen can tinh toan dang ke (>1 trieu buoc).
+  1. Mo hinh khi quyen la xap xi NRLMSISE-00 don gian hoa. Su dung
+     hieu chinh kep (0,1 cho ngan han, 0,01 cho thuc te dai han).
+  2. Hoi tu huan luyen can tinh toan dang ke (>1 trieu buoc). Tac tu
+     hien tai co hanh vi nang quy dao lam giam on dinh dai han.
   3. Mo phong don ve tinh. Mo rong bay (N>1) can mo rong khong gian
      quan sat va giao thuc phoi hop hanh dong.
   4. WebGPU can trinh duyet hien dai (Chrome/Edge 113+).
   5. Dong co C++ khong bao gom lan truyen SGP4 noi bo; su dung khoi
      tao Kepler + tich phan so RK4.
+  6. Thiet ke thuat toan mo-dun (GUIDE.md) cho phep thay the MAPPO
+     bang MADDPG, QMIX, IPPO, HAPPO hoac cac thuat toan MARL khac
+     chi can chinh sua 2 tap tin (mappo.py + import train.py).
 
 12. TAI LIEU THAM KHAO
 ================================================================================

@@ -67,6 +67,9 @@ class RewardConfig:
     w_dod:   float = 2.0               # penalty for Depth of Discharge
     w_fdir:  float = 100.0             # penalty when FDIR intervenes
     w_fatal: float = 1000.0            # massive penalty on terminal failure
+    w_alt:   float = 10.0              # penalty for altitude deviation
+    target_alt_km: float = 600.0       # nominal target altitude
+    alt_deadband_km: float = 10.0      # tolerance band (no penalty within ±10km)
 
 
 @dataclass

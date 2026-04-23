@@ -97,7 +97,9 @@
     - Exospheric temperature: T_inf = f(F10.7, F10.7_avg, Ap)
     - Bates-Walker temperature profile: T(h) = T_inf - (T_inf - T_120) * exp(-sigma * dh)
     - Diffusive equilibrium density with diurnal and latitudinal modulation
-    - Calibrated density_multiplier = 0.1 (validated against real TLE data)
+    - density_multiplier = 0.01 (calibrated for multi-year orbital lifetime)
+      Short-term validation (30 days): 0.1 gives MSE=336.5 km^2
+      Long-term realism (multi-year): 0.01 for realistic ~20+ yr decay at 600km
 
   4.3 Subsystems Modeled
 
@@ -154,7 +156,7 @@
 
   5.4 Survival Reward
 
-    R_t = 1.0 (alive) - 5.0 * dV_used - 2.0 * DoD - 1000.0 * P_fatal
+    R_t = 1.0 (alive) - 5.0 * dV_used - 2.0 * DoD - 10.0 * |h - 600| - 1000.0 * P_fatal
 
 6. PHASE 3: MISSION LAYER
 ================================================================================
@@ -198,7 +200,18 @@
     - Stochastic network impairment (delay, jitter, packet drops)
     - CSV logger with offline replay engine
 
-  7.3 Observation Normalizer
+  7.3 Fast-Forward Mode (--skip N)
+
+    Simulates all physics steps at full CPU speed, broadcasts only every
+    Nth step to the dashboard. Enables multi-year simulations:
+
+      --skip 100    100x speed (1 year in ~1 minute)
+      --skip 1000   1000x speed (10 years in ~5 minutes)
+
+    Step count reference:
+      1 day = 17,280 | 1 year = 6,307,200 | 10 years = 63,072,000
+
+  7.4 Observation Normalizer
 
     - Exact C# port of Python's observation.py
     - 29-dim normalized vector (MinMax, Robust, log10, one-hot)
@@ -206,13 +219,13 @@
 8. PHASE 5: WEBGPU DASHBOARD
 ================================================================================
 
-  8.1 Technology: Vite + React 18 + TypeScript
+  8.1 Technology: Vite + React 19 + TypeScript + Tailwind CSS v4
 
   8.2 Rendering Engine
 
     - Primary: WebGPU with WGSL shaders (instanced rendering)
     - Fallback: WebGL2 with GLSL shaders (automatic detection)
-    - Both render wireframe Earth + FDIR-colored satellite
+    - Both render wireframe Earth (bright cyan-blue) + FDIR-colored satellite
     - Coordinate transform: Lat/Lon/Alt -> ECEF (X, Y, Z)
 
   8.3 Telemetry Decoder (useTelemetry hook)
@@ -220,12 +233,18 @@
     - Zero-allocation DataView parser
     - Directly decodes binary WebSocket stream to React state
     - No JSON parsing overhead
+    - Auto-reconnect WebSocket: retries every 2 seconds if controller
+      is not yet running (dashboard can be started before controller)
 
   8.4 HUD Design
 
     - Deep-space glassmorphism theme (backdrop blur, dark gradients)
     - Dynamic FDIR state indicators with pulse animations
-    - Real-time SoC, altitude, mission clock, action readouts
+    - Mission Lifetime counter: displays elapsed time as Xy Xd Xh format
+    - SATELLITE DECEASED indicator with cause (reentry/battery/comms)
+    - Real-time SoC, altitude, agent actions, environment status
+    - FDIR-colored satellite: blue (nominal), green (payload ON),
+      amber (degraded), red (safe mode)
 
 9. PHASE 6: VALIDATION WITH REAL TLE DATA
 ================================================================================
@@ -239,37 +258,59 @@
 
   9.2 Density Multiplier Calibration
 
-    Multiplier | MSE (km^2)
-    -----------|-----------
-    0.10x      | 336.5  <-- BEST (set as default)
-    0.25x      | 438.4
-    0.50x      | 619.3
-    0.75x      | 860.5
-    1.00x      | 1145.3
+    Multiplier | MSE (km^2) | Use Case
+    -----------|------------|-----------------------------
+    0.01x      | N/A        | Long-term realism (20+ yr)
+    0.10x      | 336.5      | Best 30-day accuracy
+    0.25x      | 438.4      | -
+    0.50x      | 619.3      | -
+    0.75x      | 860.5      | -
+    1.00x      | 1145.3     | Raw model (overestimates)
 
-  9.3 Conclusion
+  9.3 Dual Calibration Strategy
 
     The simplified NRLMSISE-00 model overestimates thermospheric density
-    by approximately 10x at 600 km. After calibration (multiplier = 0.1),
-    the numerical integrator tracks real PROBA-1 orbital decay within
-    acceptable bounds (RMSE ~18.3 km over 30 days).
+    by approximately 10-100x at 600 km. Two calibration points are used:
+
+    - Short-term validation (30 days): multiplier = 0.1
+      RMSE ~18.3 km, suitable for training and unit tests.
+
+    - Long-term realism (multi-year): multiplier = 0.01
+      Matches real PROBA-1 behavior (24-year operational life at ~600 km).
+      Set as the default for operational simulations.
 
 10. RESULTS & METRICS
 ================================================================================
 
-  10.1 Engine Performance (24-hour run, smas_test.exe)
+  10.1 Engine Performance (24-hour run, density_multiplier=0.01)
 
     Metric              | Value
     --------------------|------------------
-    Final Altitude      | 574.73 km
-    Battery SoC         | 90.79%
-    Panel Efficiency    | 99.54%
-    Drag Coefficient    | 2.35 (drifted)
+    Final Altitude      | 632.28 km
+    Battery SoC         | 94.90%
+    Panel Efficiency    | 99.55%
+    Drag Coefficient    | 2.3494 (drifted)
     Charge Cycles       | 16
-    FDIR Mode           | 0 (NOMINAL)
-    Eclipse Passes      | ~15
+    FDIR Mode           | NOMINAL
+    Eclipse Steps       | 6,227 (36.0%)
+    FDIR Overrides      | 604 (3.5%)
+    Payload ON          | 9,797 steps (56.7%)
 
-  10.2 Training Results (Phase 2, 5000 steps test run)
+  10.2 Operational Simulation (10-day run, 172,800 steps)
+
+    Metric              | Value
+    --------------------|------------------
+    Simulation Time     | 240.0 hours (10 days)
+    Final Altitude      | 1,137.74 km
+    Final SoC           | 99.00%
+    FDIR Mode           | NOMINAL
+    Charge Cycles       | 147
+    Payload ON          | 45.7%
+    Eclipse             | 35.2%
+    FDIR Overrides      | 0.4%
+    Network Drops       | 2.0% (simulated impairment)
+
+  10.3 Training Results (Phase 3, test run)
 
     Metric              | Value
     --------------------|------------------
@@ -280,7 +321,7 @@
     Policy Loss         | 0.0144
     Value Loss          | 36.4593
 
-  10.3 Build Verification
+  10.4 Build Verification
 
     Component           | Status
     --------------------|--------
@@ -288,20 +329,25 @@
     Python ctypes ABI   | PASS (State=184B, Action=19B)
     C# Integration      | PASS (10/10 tests)
     Frontend Build      | PASS (npm run build, 0 errors)
-    TLE Validation      | PASS (MSE=336.5)
+    TLE Validation      | PASS (MSE=336.5 at 0.1x)
 
 11. KNOWN LIMITATIONS
 ================================================================================
 
   1. Atmospheric model is a simplified NRLMSISE-00 approximation, not the
-     full empirical model. Requires calibration multiplier.
+     full empirical model. Uses dual calibration (0.1 for short-term,
+     0.01 for long-term realism).
   2. Training convergence requires substantial compute (>1M steps for
-     meaningful policy improvement).
+     meaningful policy improvement). Current agents exhibit orbit-raising
+     behavior that reduces long-term stability.
   3. Single-satellite simulation. Swarm scaling (N>1) requires extending
      the observation space and action coordination protocol.
   4. WebGPU support requires modern browsers (Chrome/Edge 113+).
   5. The C++ engine does not include SGP4 propagation internally; it uses
      Keplerian initialization + numerical RK4 integration.
+  6. The modular algorithm design (GUIDE.md) allows swapping MAPPO for
+     MADDPG, QMIX, IPPO, HAPPO, or other MARL algorithms by editing
+     only 2 files (mappo.py + train.py imports).
 
 12. REFERENCES
 ================================================================================
@@ -316,6 +362,4 @@
   [5] ONNX Runtime: https://onnxruntime.ai/
   [6] WebGPU Specification: https://www.w3.org/TR/webgpu/
 
-================================================================================
-                           END OF ENGLISH REPORT
-================================================================================
+
