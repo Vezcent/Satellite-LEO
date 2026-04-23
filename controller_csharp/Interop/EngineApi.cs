@@ -78,7 +78,7 @@ public sealed class PhysicsEngine : IDisposable
     private IntPtr _handle;
     private bool _disposed;
 
-    public PhysicsEngine(string dataDir, ulong seed = 42, double densityMultiplier = 0.1)
+    public PhysicsEngine(string dataDir, ulong seed = 42, double densityMultiplier = 0.01)
     {
         _handle = EngineApi.smas_create(dataDir, seed, densityMultiplier);
         if (_handle == IntPtr.Zero)

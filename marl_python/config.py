@@ -22,7 +22,7 @@ class EnvConfig:
     dt: float = 5.0                     # immutable physics step (seconds)
     max_steps_per_episode: int = 17_280  # ~1 day  (86 400 / 5)
     num_envs: int = 4                   # parallel environments for rollout
-    density_multiplier: float = 0.1     # atmospheric density multiplier
+    density_multiplier: float = 0.01    # calibrated for multi-year realism (PROBA-1: 24yr at 600km)
 
 
 @dataclass

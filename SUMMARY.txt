@@ -76,7 +76,7 @@
   Export trained models to ONNX (required for C# controller):
     python export_onnx.py --checkpoint checkpoints\mappo_phase3_best.pt
 
-  ONNX models saved to: onnx_export\
+  ONNX models saved to: marl_python\onnx_export\
   Copy them to the C# controller:
     Copy-Item onnx_export\*.onnx ..\controller_csharp\models\
 
@@ -94,9 +94,20 @@
 
   Useful flags:
     --steps 17280                     Simulate 1 day (17280 x 5s steps)
+    --skip 100                        Fast-forward 100x (broadcast every 100th step)
     --no-ws                           Run without WebSocket server
     --test                            Run integration test suite (10 tests)
     --replay logs\session_XYZ.csv --speed 10   Replay at 10x speed
+
+  Step count reference:
+    1 day    = 17,280       30 days   = 518,400
+    1 year   = 6,307,200    10 years  = 63,072,000
+
+  Fast-forward examples:
+    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 6307200 --skip 100
+      (simulates 1 year, dashboard updates 100x faster)
+    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 63072000 --skip 1000
+      (simulates 10 years, dashboard updates 1000x faster)
 
   Run integration tests only:
     dotnet run -c Release -- --test
@@ -104,8 +115,6 @@
 ================================================================================
   STEP 4 -- LAUNCH THE WEBGPU DASHBOARD  (React Frontend)
 ================================================================================
-
-  The C# controller (Step 3) must be running to stream live telemetry.
 
   First-time setup:
     cd "E:\Satellite LEO\frontend_webgpu"
@@ -116,6 +125,16 @@
 
   Open the printed localhost URL (e.g., http://localhost:5173) in Chrome or
   Edge v113+. Automatically falls back to WebGL2 on older browsers.
+
+  Dashboard features:
+    - Mission Lifetime counter (years/days/hours format)
+    - SATELLITE DECEASED indicator with cause when satellite dies
+    - Auto-reconnect WebSocket (retries every 2 seconds)
+    - FDIR state indicator with pulse animation on alerts
+    - Real-time altitude, SoC, agent actions, environment status
+
+  TIP: Open the dashboard FIRST, then start the C# controller.
+       The dashboard auto-connects when the controller starts.
 
 ================================================================================
   STEP 5 -- VALIDATE AGAINST REAL TLE DATA  (Phase 6)
@@ -133,17 +152,19 @@
   FULL STACK END-TO-END RUN
 ================================================================================
 
-  Open 2 separate terminals:
-
-  Terminal 1 -- C# Controller:
-    cd "E:\Satellite LEO\controller_csharp"
-    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 17280
-
-  Terminal 2 -- React Dashboard:
+  Terminal 1 -- React Dashboard (start FIRST):
     cd "E:\Satellite LEO\frontend_webgpu"
     npm run dev
 
+  Terminal 2 -- C# Controller:
+    cd "E:\Satellite LEO\controller_csharp"
+    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 17280
+
   Then open http://localhost:5173 in Chrome/Edge.
+  Dashboard auto-reconnects when the controller starts.
+
+  Fast-forward 1 year (100x speed):
+    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 6307200 --skip 100
 
 ================================================================================
   PROJECT DIRECTORY STRUCTURE
@@ -229,3 +250,6 @@
     -> Use Chrome or Edge 113+. WebGL2 fallback is automatic.
 
 ================================================================================
+# In another terminal:
+cd "E:\Satellite LEO\controller_csharp"
+dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 172800

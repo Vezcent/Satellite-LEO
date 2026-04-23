@@ -9,6 +9,7 @@
  *   dotnet run                                              # defaults
  *   dotnet run -- --data-dir "../preprocessed-data"         # custom data
  *   dotnet run -- --steps 17280                             # 1 day
+ *   dotnet run -- --skip 100                                # fast-forward 100x
  *   dotnet run -- --replay logs/session_XYZ.csv --speed 10  # replay mode
  *   dotnet run -- --test                                    # integration test
  *
@@ -18,6 +19,7 @@
  *   --steps      Max simulation steps (default: 17280 = ~1 day)
  *   --seed       Random seed (default: 42)
  *   --port       WebSocket port (default: 8765)
+ *   --skip       Fast-forward: simulate N steps per WS frame (default: 1)
  *   --no-ws      Disable WebSocket server
  *   --replay     Path to CSV log for replay mode
  *   --speed      Replay speed multiplier (default: 1.0)
@@ -62,6 +64,7 @@ public static class Program
         Console.WriteLine($"  Data dir:  {config.DataDir}");
         Console.WriteLine($"  Model dir: {config.ModelDir}");
         Console.WriteLine($"  Steps:     {config.MaxSteps}");
+        Console.WriteLine($"  Skip:      {config.Skip}x (broadcast every {config.Skip} steps)");
         Console.WriteLine($"  Seed:      {config.Seed}");
         Console.WriteLine($"  WebSocket: {(config.NoWebSocket ? "DISABLED" : $"ws://localhost:{config.Port}/")}");
         Console.WriteLine();
@@ -134,23 +137,27 @@ public static class Program
             if (state.InEclipse == 1) eclipseSteps++;
             if (state.InSaa == 1) saaSteps++;
 
-            // f. Log telemetry
-            logger.LogStep(step, in state, in action, overridden);
+            // f. Log + broadcast only on skip boundary (fast-forward)
+            bool isBroadcastStep = (step % config.Skip == 0) || state.IsDone == 1;
 
-            // g. Broadcast via WebSocket
-            if (wsServer != null)
+            if (isBroadcastStep)
             {
-                byte[] packet = TelemetryPacket.Serialise(
-                    (uint)step, in state, in action, overridden);
-                wsServer.EnqueueFrame(packet);
+                // Log telemetry
+                logger.LogStep(step, in state, in action, overridden);
 
-                // Flush every 10 steps to avoid blocking simulation
-                if (step % 10 == 0)
+                // Broadcast via WebSocket
+                if (wsServer != null)
+                {
+                    byte[] packet = TelemetryPacket.Serialise(
+                        (uint)step, in state, in action, overridden);
+                    wsServer.EnqueueFrame(packet);
                     await wsServer.FlushAsync();
+                }
             }
 
             // h. Periodic console output
-            if (step % 1000 == 0 || state.IsDone == 1)
+            int consoleInterval = Math.Max(1000, config.Skip * 100);
+            if (step % consoleInterval == 0 || state.IsDone == 1)
             {
                 double simHours = state.SimTimeS / 3600.0;
                 Console.WriteLine(
@@ -434,6 +441,7 @@ public static class Program
         public string ModelDir { get; init; } = Path.GetFullPath(
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "controller_csharp", "models"));
         public int MaxSteps { get; init; } = 17_280;
+        public int Skip { get; init; } = 1;
         public ulong Seed { get; init; } = 42;
         public int Port { get; init; } = 8765;
         public bool NoWebSocket { get; init; } = false;
@@ -457,6 +465,9 @@ public static class Program
                     break;
                 case "--steps" when i + 1 < args.Length:
                     config = config with { MaxSteps = int.Parse(args[++i]) };
+                    break;
+                case "--skip" when i + 1 < args.Length:
+                    config = config with { Skip = Math.Max(1, int.Parse(args[++i])) };
                     break;
                 case "--seed" when i + 1 < args.Length:
                     config = config with { Seed = ulong.Parse(args[++i]) };
