@@ -1,0 +1,85 @@
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  
+  /* Deep Space Theme Colors */
+  --color-bg-base: #05050A;
+  --color-bg-panel: rgba(15, 15, 25, 0.6);
+  --color-border: rgba(255, 255, 255, 0.08);
+  
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #8A8F98;
+  --color-text-muted: #4B5058;
+
+  /* Status Colors */
+  --color-nominal: #3B82F6; /* Blue */
+  --color-nominal-glow: rgba(59, 130, 246, 0.3);
+  
+  --color-payload: #10B981; /* Green */
+  --color-payload-glow: rgba(16, 185, 129, 0.3);
+
+  --color-degraded: #F59E0B; /* Amber */
+  --color-degraded-glow: rgba(245, 158, 11, 0.3);
+
+  --color-safe: #EF4444; /* Red */
+  --color-safe-glow: rgba(239, 68, 68, 0.3);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-base);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+/* Glassmorphism Panel Utility */
+.glass-panel {
+  background: var(--color-bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* Typography Utilities */
+.text-gradient {
+  background: linear-gradient(135deg, #FFF 0%, #A0A5B0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Animations */
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 0 var(--color-safe-glow); }
+  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.pulse-alert {
+  animation: pulse-red 2s infinite;
+}
+
+/* WebGPU Canvas Container */
+#canvas-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
