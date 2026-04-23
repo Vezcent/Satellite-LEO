@@ -1,0 +1,231 @@
+================================================================================
+  S-MAS -- SATELLITE MULTI-AGENT SYSTEM
+  Complete Run Guide
+  Last Updated: 2026-04-23
+================================================================================
+
+  PROJECT OVERVIEW
+  -----------------
+  A full-stack satellite simulation platform with:
+    * C++ Physics Engine  (RK4 + NRLMSISE-00 drag + J2 gravity)
+    * Python MARL Training (MAPPO, 3-agent: Nav + Bus + Mission)
+    * C# Controller        (ONNX inference + FDIR + WebSocket server)
+    * React WebGPU Dashboard (real-time 3D telemetry visualization)
+
+  PREREQUISITES
+  --------------
+    * Python 3.10+     (tested 3.10.x)
+    * .NET 10.0 SDK
+    * Node.js 18+      (for the frontend)
+    * Visual Studio 2022/2026 Build Tools with C++ desktop workload
+    * CMake 3.20+
+    * A virtual environment (.venv) at project root
+
+================================================================================
+  STEP 0 -- ACTIVATE ENVIRONMENT  (ALWAYS DO THIS FIRST)
+================================================================================
+
+  cd "E:\Satellite LEO"
+  .venv\Scripts\Activate.ps1
+
+  Install Python dependencies (first time only):
+
+    pip install -r requirements.txt
+    pip install sgp4 torch torchvision
+
+================================================================================
+  STEP 1 -- BUILD THE C++ PHYSICS ENGINE
+================================================================================
+
+  Run once, or whenever you change backend_cpp\src\*.cpp or *.h
+
+  cd "E:\Satellite LEO\backend_cpp"
+  Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+  mkdir build
+  cmd.exe /c " ""C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"" && cd /d ""E:\Satellite LEO\backend_cpp\build"" && cmake -G ""NMake Makefiles"" -DCMAKE_BUILD_TYPE=Release .. && nmake "
+
+  Outputs:
+    backend_cpp\build\smas_engine.dll  <-- loaded by Python & C#
+    backend_cpp\build\smas_test.exe    <-- standalone validation binary
+
+  Quick smoke test (simulates 24 hours):
+    .\build\smas_test.exe "..\preprocessed-data" 17280
+
+  Expected: 40 rows of telemetry, "FDIR Mode: 0", altitude ~570-580 km.
+
+  IMPORTANT: The exe is at build\smas_test.exe, NOT build\Release\smas_test.exe.
+  The Release\ subfolder only exists when using the Visual Studio generator.
+  Always use NMake Makefiles as shown above.
+
+================================================================================
+  STEP 2 -- TRAIN THE MARL AGENTS  (Python)
+================================================================================
+
+  Requires the C++ DLL from Step 1.
+
+  cd "E:\Satellite LEO\marl_python"
+
+  Phase 2 -- Survival (Navigation + Bus agents):
+    python train.py --phase 2 --total_steps 500000 --device cpu
+
+  Phase 3 -- Full mission (adds Mission agent for payload control):
+    python train.py --phase 3 --total_steps 1000000 --device cpu
+
+  Checkpoints saved to: marl_python\checkpoints\
+
+  Export trained models to ONNX (required for C# controller):
+    python export_onnx.py --checkpoint checkpoints\mappo_phase3_best.pt
+
+  ONNX models saved to: marl_python\onnx_export\
+  Copy them to the C# controller:
+    Copy-Item marl_python\onnx_export\*.onnx controller_csharp\models\
+
+================================================================================
+  STEP 3 -- RUN THE C# CONTROLLER  (FDIR + ONNX + WebSocket Server)
+================================================================================
+
+  Requires ONNX models in controller_csharp\models\ from Step 2.
+
+  cd "E:\Satellite LEO\controller_csharp"
+  dotnet restore
+  dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 17280
+
+  This starts the WebSocket server at ws://localhost:8765.
+
+  Useful flags:
+    --steps 17280                     Simulate 1 day (17280 x 5s steps)
+    --no-ws                           Run without WebSocket server
+    --test                            Run integration test suite (10 tests)
+    --replay logs\session_XYZ.csv --speed 10   Replay at 10x speed
+
+  Run integration tests only:
+    dotnet run -c Release -- --test
+
+================================================================================
+  STEP 4 -- LAUNCH THE WEBGPU DASHBOARD  (React Frontend)
+================================================================================
+
+  The C# controller (Step 3) must be running to stream live telemetry.
+
+  First-time setup:
+    cd "E:\Satellite LEO\frontend_webgpu"
+    npm install
+
+  Start dev server:
+    npm run dev
+
+  Open the printed localhost URL (e.g., http://localhost:5173) in Chrome or
+  Edge v113+. Automatically falls back to WebGL2 on older browsers.
+
+================================================================================
+  STEP 5 -- VALIDATE AGAINST REAL TLE DATA  (Phase 6)
+================================================================================
+
+  Compares the engine's orbital decay against real PROBA-1 historical TLEs.
+  Saves a plot to marl_python\decay_comparison.png.
+
+  cd "E:\Satellite LEO\marl_python"
+  python validate_tle.py
+
+  Expected: MSE ~336 at density_multiplier=0.1 (best calibration found).
+
+================================================================================
+  FULL STACK END-TO-END RUN
+================================================================================
+
+  Open 2 separate terminals:
+
+  Terminal 1 -- C# Controller:
+    cd "E:\Satellite LEO\controller_csharp"
+    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --steps 17280
+
+  Terminal 2 -- React Dashboard:
+    cd "E:\Satellite LEO\frontend_webgpu"
+    npm run dev
+
+  Then open http://localhost:5173 in Chrome/Edge.
+
+================================================================================
+  PROJECT DIRECTORY STRUCTURE
+================================================================================
+
+  E:\Satellite LEO\
+  |
+  +-- backend_cpp\           C++ Physics Engine (DLL + test binary)
+  |   +-- src\               simulation_engine, orbital_mechanics, atmosphere...
+  |   +-- include\           Headers
+  |   +-- build\             Compiled output (smas_engine.dll, smas_test.exe)
+  |
+  +-- marl_python\           Python MARL Training & Validation
+  |   +-- train.py           Main training script
+  |   +-- export_onnx.py     ONNX model exporter
+  |   +-- validate_tle.py    TLE ground-truth comparator (Phase 6)
+  |   +-- checkpoints\       Saved PyTorch weights (.pt)
+  |   +-- onnx_export\       Exported ONNX models
+  |
+  +-- controller_csharp\     C# Controller (ONNX + FDIR + WebSocket)
+  |   +-- Program.cs         Entry point
+  |   +-- models\            ONNX models: nav, bus, mission
+  |   +-- logs\              CSV telemetry session logs
+  |
+  +-- frontend_webgpu\       React + Vite WebGPU Dashboard
+  |   +-- src\
+  |       +-- components\    Dashboard HUD (Dashboard.tsx)
+  |       +-- engine\        WebGPUContext, WebGLContext, Renderer
+  |       +-- lib\           Binary WebSocket decoder (useTelemetry hook)
+  |
+  +-- preprocessed-data\     Processed data (<50 MB)
+  |   +-- initial_state.txt  Starting TLE (PROBA-1, NORAD 26957)
+  |   +-- space_weather.csv  F10.7 & Ap indices (2001-2020)
+  |   +-- saa_heatmap_600km.csv  SAA radiation flux grid
+  |   +-- ground_stations.json   Ground station coordinates
+  |
+  +-- dataset\               Raw historical input data
+  |   +-- PROBA-1_Orbit_Raw.txt  43,000+ historical TLEs
+  |
+  +-- requirements.txt       Python dependencies
+  +-- current_progress.txt   Phase completion tracker
+  +-- SUMMARY.txt            This file
+
+================================================================================
+  KEY CONFIGURATION
+================================================================================
+
+  marl_python\config.py:
+    density_multiplier      = 0.1      <- Calibrated vs PROBA-1 real TLE data
+    max_steps_per_episode   = 17280    <- 1 day simulation
+    dll_path                = backend_cpp\build\smas_engine.dll
+
+  backend_cpp\include\constants.h:
+    DT              = 5.0 s            <- Integration timestep (fixed)
+    NOMINAL_ALT_KM  = 600.0            <- Target orbit altitude
+    REENTRY_ALT_KM  = 200.0            <- Terminal failure altitude
+
+  WebSocket binary packet format (ws://localhost:8765):
+    [Version(1B) | Seq(4B) | PayloadLen(4B) | Payload(98B) | CRC32(4B)]
+
+================================================================================
+  TROUBLESHOOTING
+================================================================================
+
+  Python: DLL not found
+    -> Rebuild Step 1. Check build\smas_engine.dll exists.
+
+  smas_test.exe not found at build\Release\
+    -> Correct path is build\smas_test.exe (NMake puts it directly in build\).
+       build\Release\ only exists with the Visual Studio generator.
+
+  CMake: generator conflict error
+    -> Remove-Item -Recurse -Force build  then redo Step 1.
+
+  Python: OSError 193 (%1 is not valid Win32 application)
+    -> DLL is 32-bit but Python is 64-bit.
+       Rebuild using vcvars64.bat as shown in Step 1.
+
+  Dashboard: WebSocket not connecting
+    -> Start the C# controller (Step 3) before opening the browser.
+
+  Dashboard: WebGPU not available
+    -> Use Chrome or Edge 113+. WebGL2 fallback is automatic.
+
+================================================================================
