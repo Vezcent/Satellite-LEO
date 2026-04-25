@@ -34,6 +34,7 @@ public:
     // ── Lifecycle ─────────────────────────────────────────────────
     bool  init();       // Load data files, return false on failure
     void  reset();      // Reset to initial conditions for new episode
+    void  set_time(double time_s); // Jump to a specific time
     StatePacket step(const ActionPacket& action); // Advance one dt
 
     // ── Accessors ─────────────────────────────────────────────────

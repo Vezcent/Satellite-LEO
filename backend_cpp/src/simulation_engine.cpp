@@ -72,6 +72,11 @@ void SimulationEngine::reset() {
     state_.drag_coeff = constants::SAT_CD_NOMINAL;
 }
 
+void SimulationEngine::set_time(double time_s) {
+    orbit_.time = time_s;
+    update_time();
+}
+
 void SimulationEngine::update_time() {
     sim_time_struct_.total_seconds = orbit_.time;
 

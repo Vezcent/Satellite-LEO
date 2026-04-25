@@ -27,6 +27,11 @@ SMAS_API void smas_reset(void* engine) {
     eng->reset();
 }
 
+SMAS_API void smas_set_time(void* engine, double time_s) {
+    auto* eng = static_cast<smas::SimulationEngine*>(engine);
+    eng->set_time(time_s);
+}
+
 SMAS_API void smas_step(void* engine,
                         const smas::ActionPacket* action,
                         smas::StatePacket* out_state) {

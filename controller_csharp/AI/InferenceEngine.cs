@@ -5,7 +5,7 @@
  * Loads smas_nav.onnx, smas_bus.onnx, smas_mission.onnx
  * and provides inference methods returning typed action outputs.
  *
- * Input:  float[29] normalised observation vector
+ * Input:  float[30] normalised observation vector
  * Output: NavigationAction (mu[4]), bus decision (0/1), mission decision (0/1)
  */
 using Microsoft.ML.OnnxRuntime;
@@ -80,7 +80,7 @@ public sealed class InferenceEngine : IDisposable
     /// <summary>
     /// Run inference on all 3 agent heads for a single observation.
     /// </summary>
-    /// <param name="obs">Normalised 29-dim observation vector.</param>
+    /// <param name="obs">Normalised 30-dim observation vector.</param>
     /// <returns>Combined actions from all agents.</returns>
     public AgentActions Infer(float[] obs)
     {

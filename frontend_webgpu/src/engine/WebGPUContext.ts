@@ -1,4 +1,4 @@
-import { mat4, vec3 } from 'gl-matrix';
+import { mat4, vec3, vec4 } from 'gl-matrix';
 import type { IRenderContext } from './Renderer';
 import type { TelemetryData } from '../lib/telemetry';
 import { createSphere } from './geometry';
@@ -14,6 +14,13 @@ struct Uniforms {
   atmDensity: f32,
   pad2: f32, pad3: f32,
 };
+
+fn colormap(x: f32) -> vec3<f32> {
+    let r = clamp(1.5 - abs(4.0 * x - 3.0), 0.0, 1.0);
+    let g = clamp(1.5 - abs(4.0 * x - 2.0), 0.0, 1.0);
+    let b = clamp(1.5 - abs(4.0 * x - 1.0), 0.0, 1.0);
+    return vec3<f32>(r, g, b);
+}
 
 @binding(0) @group(0) var<uniform> uniforms : Uniforms;
 @binding(1) @group(0) var heatmapSampler : sampler;
@@ -52,18 +59,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let L = normalize(uniforms.sunDir.xyz);
     let diff = max(dot(N, L), 0.0);
     
-    let earthBase = vec3<f32>(0.05, 0.15, 0.4);
-    let litColor = earthBase * (0.2 + 0.8 * diff);
+    let earthBase = vec3<f32>(0.1, 0.2, 0.5);
+    let litColor = earthBase * (0.4 + 0.6 * diff);
     
     let uvFlipped = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
     let heat = textureSample(heatmapTexture, heatmapSampler, uvFlipped).r;
-    let heatColor = vec3<f32>(1.0, 0.2, 0.0) * heat * 4.0;
+    
+    var heatColor = vec3<f32>(0.0);
+    if (heat > 0.01) {
+        heatColor = colormap(heat) * 1.5;
+        let contour = smoothstep(0.05, 0.0, abs(fract(heat * 10.0 + 0.5) - 0.5));
+        heatColor += vec3<f32>(contour * 0.3);
+    }
     
     let viewDir = normalize(-in.viewPos);
     let fresnel = pow(1.0 - max(dot(N, viewDir), 0.0), 3.0);
-    let atmColor = vec3<f32>(0.3, 0.6, 1.0) * fresnel * (0.5 + uniforms.atmDensity * 2.0);
+    let atmColor = vec3<f32>(0.4, 0.7, 1.0) * fresnel * (0.5 + uniforms.atmDensity * 3.0);
     
-    return vec4<f32>(litColor + heatColor + atmColor, 1.0);
+    var finalColor = litColor;
+    if (heat > 0.1) {
+        finalColor = mix(litColor, heatColor, heat * 0.8);
+    } else {
+        finalColor += heatColor * 0.5;
+    }
+    
+    return vec4<f32>(finalColor + atmColor, 1.0);
   } else if (uniforms.isEarth > 0.2) {
     return vec4<f32>(in.color.rgb, 0.2);
   } else {
@@ -227,7 +247,7 @@ export class WebGPUContext implements IRenderContext {
       if (maxFlux > 0) {
         for (let i = 0; i < data.length; i++) {
           const val = data[i] / maxFlux;
-          ui8Data[i] = Math.floor(Math.pow(val, 0.4) * 255);
+          ui8Data[i] = Math.floor(Math.pow(val, 0.3) * 255);
         }
       }
       this.device.queue.writeTexture({ texture: this.heatmapTexture }, ui8Data, { bytesPerRow: w }, [w, h, 1]);
@@ -300,7 +320,11 @@ export class WebGPUContext implements IRenderContext {
       [0, 1, 0]
     );
 
-    const sunDir = new Float32Array([1.0, 0.2, 0.5, 0.0]);
+    const sunWorld = vec4.fromValues(1.0, 0.5, 0.8, 0.0);
+    const sunView = vec4.create();
+    vec4.transformMat4(sunView, sunWorld, this.viewMatrix);
+    const sunDir = new Float32Array([sunView[0], sunView[1], sunView[2], 0.0]);
+
     const normDensity = Math.min(Math.max((Math.log10(this.currentAtmDensity + 1e-20) + 15) / 5.0, 0.0), 1.0);
 
     // Update Earth Uniforms

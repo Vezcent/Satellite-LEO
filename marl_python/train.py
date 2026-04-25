@@ -129,7 +129,7 @@ def train(train_cfg: TrainConfig,
     # ── Main training loop ─────────────────────────────────────────
     while total_steps < train_cfg.total_timesteps:
         # ── Episode start ──
-        raw_state = env.reset()
+        raw_state = env.reset(randomize=True)
         obs = obs_builder.build(raw_state)
         episode_reward = 0.0
         episode_steps = 0

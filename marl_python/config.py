@@ -30,7 +30,7 @@ class ObsConfig:
     """Observation space dimensions and normalisation."""
     # StatePacket fields selected for the observation vector
     # (raw_dim will be computed automatically in observation.py)
-    orbit_features: int = 6            # alt, lat, lon, |v|, vx_norm, vy_norm
+    orbit_features: int = 7            # alt, lat, lon, |v|, vx_norm, vy_norm, vz_norm
     power_features: int = 4            # soc, capacity_frac, solar_w, draw_w
     env_features:   int = 5            # rho_log, flux10_log, flux30_log, eclipse, saa
     comm_features:  int = 2            # gs_visible_any, time_since_contact_norm
@@ -63,13 +63,13 @@ class ActionConfig:
 class RewardConfig:
     """Explicit reward weights (from pipeline doc §3.2.2)."""
     w_alive: float = 1.0               # +1 per step survived
-    w_fuel:  float = 5.0               # penalty per unit ΔV used
+    w_fuel:  float = 1.0               # penalty per unit ΔV used (reduced to encourage thrust)
     w_dod:   float = 2.0               # penalty for Depth of Discharge
     w_fdir:  float = 100.0             # penalty when FDIR intervenes
-    w_fatal: float = 1000.0            # massive penalty on terminal failure
-    w_alt:   float = 10.0              # penalty for altitude deviation
+    w_fatal: float = 5000.0            # massive penalty on terminal failure
+    w_alt:   float = 100.0             # penalty for altitude deviation (increased for strict maintenance)
     target_alt_km: float = 600.0       # nominal target altitude
-    alt_deadband_km: float = 10.0      # tolerance band (no penalty within ±10km)
+    alt_deadband_km: float = 2.0       # tolerance band (no penalty within ±2km)
 
 
 @dataclass

@@ -1,1 +1,25 @@
-Nothing here
+# S-MAS Optimization Feedback — April 25, 2026
+
+## Critical Bug Fixes
+1. **3D Velocity Context (Incomplete Navigation)**
+   - **Change**: Added `vz_norm` (normalized Z-velocity) to the observation vector. 
+   - **Meaning**: Previously, the satellite only "saw" its movement in the X and Y planes. Because the orbit is polar-inclined (97.7°), it was missing roughly 1/3 of its orbital context. Adding Z-velocity allows the AI to correctly orient its prograde/retrograde thrust in 3D ECI space.
+   - **Impact**: Dramatically improves thrust efficiency and prevents "drifting" into re-entry.
+
+2. **Solar Cycle Generalization (Training Robustness)**
+   - **Change**: Implemented `smas_set_time` in the C++ engine and added `randomize=True` to the Python `reset()` call.
+   - **Meaning**: The AI now trains against random dates between 2000 and 2017. 
+   - **Impact**: The satellite is no longer "surprised" by sudden high-drag periods (Solar Maximum) that it hadn't seen during static-date training.
+
+## Reward Shaping Updates
+1. **Aggressive Altitude Maintenance**
+   - `w_alt`: Increased from 10.0 to 100.0. (Stronger correction signal).
+   - `alt_deadband_km`: Reduced from 10.0km to 2.0km. (Strict 600km station-keeping).
+2. **Survival Prioritization**
+   - `w_fuel`: Reduced from 5.0 to 1.0. (Telling the AI that using fuel for survival is "cheaper" than allowing altitude to drop).
+   - `w_fatal`: Increased from 1,000 to 5,000. (Extreme discouragement of re-entry).
+
+## Technical Requirements
+- **Observation Space**: Increased from 29 to 30 dimensions.
+- **Engine Rebuild**: C++ DLL must be re-compiled to support the `smas_set_time` export.
+- **Retraining**: Models must be retrained using the new 30-dim observation builder.

@@ -97,8 +97,9 @@ class ObservationBuilder:
         if v_mag > 0:
             obs.append(s.vel_x / v_mag)
             obs.append(s.vel_y / v_mag)
+            obs.append(s.vel_z / v_mag)
         else:
-            obs.extend([0.0, 0.0])
+            obs.extend([0.0, 0.0, 0.0])
 
         # ── 2. Power features (4) ─────────────────────────────────
         obs.append(s.battery_soc)  # already [0,1]

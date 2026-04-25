@@ -41,6 +41,13 @@ uniform sampler2D uHeatmap;
 uniform float uIsEarth; // 1.0 = solid, 0.5 = wireframe, 0.0 = sat
 uniform float uAtmDensity;
 
+vec3 colormap(float x) {
+    float r = clamp(1.5 - abs(4.0 * x - 3.0), 0.0, 1.0);
+    float g = clamp(1.5 - abs(4.0 * x - 2.0), 0.0, 1.0);
+    float b = clamp(1.5 - abs(4.0 * x - 1.0), 0.0, 1.0);
+    return vec3(r, g, b);
+}
+
 out vec4 fragColor;
 
 void main() {
@@ -50,19 +57,33 @@ void main() {
     float diff = max(dot(N, L), 0.0);
     
     // Earth surface color (Ocean blue)
-    vec3 earthBase = vec3(0.05, 0.15, 0.4);
-    vec3 litColor = earthBase * (0.2 + 0.8 * diff);
+    vec3 earthBase = vec3(0.1, 0.2, 0.5);
+    vec3 litColor = earthBase * (0.4 + 0.6 * diff); // Increased ambient from 0.2 to 0.4
     
-    // Sample heatmap (flip Y because of WebGL coordinate space vs array layout)
+    // Sample heatmap
     float heat = texture(uHeatmap, vec2(vUV.x, 1.0 - vUV.y)).r;
-    vec3 heatColor = vec3(1.0, 0.2, 0.0) * heat * 4.0; // Intensified heat
+    vec3 heatColor = vec3(0.0);
+    if (heat > 0.01) {
+        heatColor = colormap(heat) * 1.5;
+        // Optional: Contour lines
+        float contour = smoothstep(0.05, 0.0, abs(fract(heat * 10.0 + 0.5) - 0.5));
+        heatColor += vec3(contour * 0.3);
+    }
     
-    // Atmospheric Glow (Fresnel effect)
+    // Atmospheric Glow
     vec3 viewDir = normalize(-vPosition);
     float fresnel = pow(1.0 - max(dot(N, viewDir), 0.0), 3.0);
-    vec3 atmColor = vec3(0.3, 0.6, 1.0) * fresnel * (0.5 + uAtmDensity * 2.0);
+    vec3 atmColor = vec3(0.4, 0.7, 1.0) * fresnel * (0.5 + uAtmDensity * 3.0);
     
-    fragColor = vec4(litColor + heatColor + atmColor, 1.0);
+    // Mix earth and heatmap
+    vec3 finalColor = litColor;
+    if (heat > 0.1) {
+        finalColor = mix(litColor, heatColor, heat * 0.8);
+    } else {
+        finalColor += heatColor * 0.5;
+    }
+    
+    fragColor = vec4(finalColor + atmColor, 1.0);
   } else if (uIsEarth > 0.2) {
     fragColor = vec4(vColor, 0.2); // Wireframe
   } else {
@@ -167,7 +188,7 @@ export class WebGLContext implements IRenderContext {
         if (maxFlux > 0) {
           for (let i = 0; i < data.length; i++) {
             const val = data[i] / maxFlux;
-            ui8Data[i] = Math.floor(Math.pow(val, 0.4) * 255); // gamma correction to make faint areas visible
+            ui8Data[i] = Math.floor(Math.pow(val, 0.3) * 255); // even more aggressive gamma
           }
         }
         gl.bindTexture(gl.TEXTURE_2D, this.heatmapTex);
@@ -258,7 +279,12 @@ export class WebGLContext implements IRenderContext {
       [0, 1, 0]
     );
 
-    gl.uniform3f(this.uSunDir, 1.0, 0.2, 0.5);
+    // Transform sun direction into view space
+    const sunWorld = vec4.fromValues(1.0, 0.5, 0.8, 0.0);
+    const sunView = vec4.create();
+    vec4.transformMat4(sunView, sunWorld, this.viewMatrix);
+    gl.uniform3f(this.uSunDir, sunView[0], sunView[1], sunView[2]);
+
     const normDensity = Math.min(Math.max((Math.log10(this.currentAtmDensity + 1e-20) + 15) / 5.0, 0.0), 1.0);
     gl.uniform1f(this.uAtmDensity, normDensity);
 

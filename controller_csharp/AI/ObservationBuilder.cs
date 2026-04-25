@@ -26,7 +26,7 @@ namespace SmasController.AI;
 /// </summary>
 public sealed class ObservationBuilder
 {
-    public const int ObsDim = 29;
+    public const int ObsDim = 30;
 
     /// <summary>
     /// Build the observation vector from a raw StatePacket.
@@ -48,9 +48,11 @@ public sealed class ObservationBuilder
         {
             obs[i++] = (float)(s.VelX / vMag);
             obs[i++] = (float)(s.VelY / vMag);
+            obs[i++] = (float)(s.VelZ / vMag);
         }
         else
         {
+            obs[i++] = 0f;
             obs[i++] = 0f;
             obs[i++] = 0f;
         }

@@ -137,6 +137,9 @@ class SatelliteEnv:
         # smas_is_done(engine) -> int
         self._lib.smas_is_done.argtypes = [ct.c_void_p]
         self._lib.smas_is_done.restype  = ct.c_int
+        # smas_set_time(engine, time_s) -> void
+        self._lib.smas_set_time.argtypes = [ct.c_void_p, ct.c_double]
+        self._lib.smas_set_time.restype  = None
         # smas_destroy(engine) -> void
         self._lib.smas_destroy.argtypes = [ct.c_void_p]
         self._lib.smas_destroy.restype  = None
@@ -167,9 +170,19 @@ class SatelliteEnv:
 
     # ── Gym-like interface ─────────────────────────────────────────
 
-    def reset(self) -> StatePacket:
+    def reset(self, randomize: bool = False) -> StatePacket:
         """Reset environment. Returns raw StatePacket."""
         self._lib.smas_reset(self._handle)
+        
+        if randomize:
+            # Sample random start time from the 17-year space weather dataset
+            # (2000 to 2017)
+            # Max time ~ 17 years * 365 days * 86400s ≈ 536,112,000s
+            # We subtract 30 days to ensure we don't run off the end
+            max_start = (17 * 365 - 30) * 86400.0
+            start_time = np.random.uniform(0, max_start)
+            self._lib.smas_set_time(self._handle, ct.c_double(start_time))
+            
         self._step_count = 0
         self._prev_fdir = 0
         # Do one no-op step to get initial state

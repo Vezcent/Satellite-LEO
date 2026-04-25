@@ -31,6 +31,9 @@ SMAS_API int smas_init(void* engine);
 // Reset to initial conditions.
 SMAS_API void smas_reset(void* engine);
 
+// Jump to a specific simulation time (seconds since TLE epoch).
+SMAS_API void smas_set_time(void* engine, double time_s);
+
 // Advance one time step. Fills `out_state`.
 SMAS_API void smas_step(void* engine,
                         const smas::ActionPacket* action,
