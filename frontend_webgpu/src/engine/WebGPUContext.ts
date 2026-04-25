@@ -38,6 +38,7 @@ struct VertexOutput {
   @location(1) normal: vec3<f32>,
   @location(2) uv: vec2<f32>,
   @location(3) viewPos: vec3<f32>,
+  @location(4) localNormal: vec3<f32>,
 };
 
 @vertex
@@ -47,6 +48,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
   output.position = uniforms.projectionMatrix * pos;
   output.viewPos = pos.xyz;
   output.normal = (uniforms.normalMatrix * vec4<f32>(in.normal, 0.0)).xyz;
+  output.localNormal = in.normal;
   output.uv = in.uv;
   output.color = uniforms.color;
   return output;
@@ -63,17 +65,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let diff = max(dot(N, L), 0.0);
     let spec = pow(max(dot(N, H), 0.0), 32.0) * 0.5;
     
-    let earthBase = vec3<f32>(0.05, 0.15, 0.4);
-    let litColor = earthBase * (0.1 + 0.9 * diff) + vec3<f32>(0.6, 0.8, 1.0) * spec * diff;
+    // PROCEDURAL CONTINENTS (Using Local Normal)
+    var land = 0.0;
+    var p_land = in.localNormal * 3.5;
+    for(var i: i32 = 0; i < 5; i++) {
+        land += (sin(p_land.x) * cos(p_land.y) + sin(p_land.y) * cos(p_land.z) + sin(p_land.z) * cos(p_land.x)) * pow(0.5, f32(i));
+        p_land *= 2.2;
+    }
+    let isLand = land > 0.15;
+    var earthColor = vec3<f32>(0.05, 0.15, 0.4); // Ocean
+    if (isLand) { 
+        earthColor = vec3<f32>(0.2, 0.4, 0.1) * (0.8 + 0.2 * sin(land * 10.0)); // Land
+    }
+    
+    let litColor = earthColor * (0.1 + 0.9 * diff) + vec3<f32>(0.6, 0.8, 1.0) * spec * diff;
     
     let uvFlipped = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
     let heat = textureSample(heatmapTexture, heatmapSampler, uvFlipped).r;
     
     var heatColor = vec3<f32>(0.0);
     if (heat > 0.01) {
-        heatColor = colormap(heat) * 2.0;
+        heatColor = colormap(heat) * 2.5;
         let contour = smoothstep(0.05, 0.0, abs(fract(heat * 15.0 + 0.5) - 0.5));
-        heatColor += vec3<f32>(contour * 0.4);
+        heatColor += vec3<f32>(contour * 0.5);
     }
     
     let rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
@@ -81,11 +95,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var atmColor = vec3<f32>(0.3, 0.6, 1.0) * rim * (0.2 + 0.8 * diff);
     atmColor += vec3<f32>(1.0, 0.9, 0.7) * sunScattering * rim * 2.0;
     
-    let finalColor = mix(litColor, heatColor, heat * 0.7) + atmColor * (0.5 + uniforms.atmDensity * 2.0);
+    let finalColor = mix(litColor, heatColor, heat * 0.8) + atmColor * (0.5 + uniforms.atmDensity * 2.0);
     return vec4<f32>(finalColor, 1.0);
 
+  } else if (uniforms.isEarth < -0.5) {
+    // STATIC SPARSE STARS
+    let dir = normalize(in.viewPos);
+    let grid = floor(dir * 1000.0);
+    
+    let s = fract(sin(dot(grid, vec3<f32>(12.9898, 78.233, 45.164))) * 43758.5453);
+    let stars = pow(s, 800.0) * 20.0;
+    
+    return vec4<f32>(vec3<f32>(stars), 1.0);
+
   } else if (uniforms.isEarth > 0.4) {
-    return vec4<f32>(in.color.rgb * 1.5, 0.15);
+    // Subtle Wireframe
+    return vec4<f32>(in.color.rgb, 0.05); 
   } else if (uniforms.isEarth > 0.1) {
     // SUN STARBURST
     let uv = in.uv * 2.0 - 1.0;
@@ -121,6 +146,10 @@ export class WebGPUContext implements IRenderContext {
   private earthEBO!: GPUBuffer;
   private numEarthIndices = 0;
 
+  private galaxyVBO!: GPUBuffer;
+  private galaxyEBO!: GPUBuffer;
+  private numGalaxyIndices = 0;
+
   private satVBO!: GPUBuffer;
   private satVBN!: GPUBuffer;
   private satVBU!: GPUBuffer;
@@ -141,6 +170,9 @@ export class WebGPUContext implements IRenderContext {
   private earthBindGroup!: GPUBindGroup;
   private earthWireBindGroup!: GPUBindGroup;
   private satBindGroup!: GPUBindGroup;
+  private sunBindGroup!: GPUBindGroup;
+  private galaxyBindGroup!: GPUBindGroup;
+  private galaxyUniformBuffer!: GPUBuffer;
 
   private satPosition = vec3.fromValues(0, 0, 0);
   private satColor = vec3.fromValues(0.2, 0.5, 1.0);
@@ -224,6 +256,11 @@ export class WebGPUContext implements IRenderContext {
     this.earthEBO = this.createBuffer(earthGeo.indices, GPUBufferUsage.INDEX);
     this.numEarthIndices = earthGeo.indices.length;
 
+    const galaxyGeo = createSphere(45000, 16, 16);
+    this.galaxyVBO = this.createBuffer(galaxyGeo.positions, GPUBufferUsage.VERTEX);
+    this.galaxyEBO = this.createBuffer(galaxyGeo.indices, GPUBufferUsage.INDEX);
+    this.numGalaxyIndices = galaxyGeo.indices.length;
+
     const satGeo = createSphere(150, 8, 8);
     this.satVBO = this.createBuffer(satGeo.positions, GPUBufferUsage.VERTEX);
     this.satVBN = this.createBuffer(satGeo.normals, GPUBufferUsage.VERTEX);
@@ -243,6 +280,9 @@ export class WebGPUContext implements IRenderContext {
     this.earthWireBindGroup = this.createBindGroup(this.earthWireUniformBuffer, this.wirePipeline);
     this.satBindGroup = this.createBindGroup(this.satUniformBuffer, this.solidPipeline);
     this.sunBindGroup = this.createBindGroup(this.sunUniformBuffer, this.sunPipeline);
+
+    this.galaxyUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.galaxyBindGroup = this.createBindGroup(this.galaxyUniformBuffer, this.solidPipeline);
   }
 
   private createBindGroup(buffer: GPUBuffer, pipeline: GPURenderPipeline): GPUBindGroup {
@@ -389,6 +429,10 @@ export class WebGPUContext implements IRenderContext {
     mat4.translate(satModelView, satModelView, this.satPosition);
     updateUniform(this.satUniformBuffer, satModelView, this.satColor, 0.0);
 
+    const galaxyView = mat4.clone(this.viewMatrix);
+    galaxyView[12] = 0; galaxyView[13] = 0; galaxyView[14] = 0;
+    updateUniform(this.galaxyUniformBuffer, galaxyView, vec3.fromValues(1,1,1), -1.0);
+
     const sunWorldPos = [sunWorld[0] * 40000, sunWorld[1] * 40000, sunWorld[2] * 40000];
     const sunModelView = mat4.clone(this.viewMatrix);
     mat4.translate(sunModelView, sunModelView, sunWorldPos as any);
@@ -412,6 +456,15 @@ export class WebGPUContext implements IRenderContext {
         depthStoreOp: 'store'
       }
     });
+
+    // 0. Galaxy Background
+    renderPass.setPipeline(this.solidPipeline);
+    renderPass.setBindGroup(0, this.galaxyBindGroup);
+    renderPass.setVertexBuffer(0, this.galaxyVBO);
+    renderPass.setVertexBuffer(1, this.earthVBN); // Dummy
+    renderPass.setVertexBuffer(2, this.earthVBU); // Dummy
+    renderPass.setIndexBuffer(this.galaxyEBO, 'uint16');
+    renderPass.drawIndexed(this.numGalaxyIndices);
 
     renderPass.setPipeline(this.solidPipeline);
     renderPass.setBindGroup(0, this.earthBindGroup);

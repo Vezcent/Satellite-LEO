@@ -23,3 +23,23 @@
 - **Observation Space**: Increased from 29 to 30 dimensions.
 - **Engine Rebuild**: C++ DLL must be re-compiled to support the `smas_set_time` export.
 - **Retraining**: Models must be retrained using the new 30-dim observation builder.
+
+## Premium Visuals & Dashboard (Phase 4)
+1. **Dynamic Lighting & Glint**
+   - **Update**: Added Blinn-Phong specular glint (ocean reflection) and Rayleigh scattering (atmospheric bloom).
+   - **Impact**: Sunlight now feels directional and "clear." The Earth looks like a physical object rather than a flat sphere.
+2. **Sun Starburst & Cosmos**
+   - **Update**: Implemented procedural Sun rays and a static, sparse starfield.
+   - **Impact**: Fixes the "TV Static" look of the background and adds cinematic "light rays" as requested.
+3. **Procedural Continents**
+   - **Update**: Added noise-based landmass generation locked to the Earth's local normal.
+   - **Impact**: The Earth now rotates realistically with visible landmasses and the SAA heatmap in sync.
+
+## Mission Agent Optimization (Phase 5)
+1. **The "Lazy AI" / Sloth Fix**
+   - **Change**: Increased `w_valid_target` (50 -> 500) and added `w_sloth_penalty` (-200).
+   - **Meaning**: The AI was choosing to stay in Deep Sleep forever to avoid power loss. We have now made "Imaging" more valuable than "Sleeping."
+   - **Impact**: Satellite will now wake up and prioritize the mission over pure survival when the battery is healthy (>90%).
+2. **Offline Analysis Tools**
+   - **Feature**: Created `visualize.py`.
+   - **Benefit**: Allows you to generate high-resolution PNG plots and mission summary CSVs (Lifetime, Fuel, Payload duty cycle) after each run.

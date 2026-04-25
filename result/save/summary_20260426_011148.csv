@@ -1,0 +1,2 @@
+timestamp,log_file,lifetime_days,lifetime_hours,lifetime_mins,avg_soc_pct,payload_duty_cycle_pct,avg_altitude_km,final_status,death_reason
+20260426_011148,session_20260426_004200.csv,470,11,40,98.58,0.0,565.73,DECEASED,

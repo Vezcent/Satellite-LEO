@@ -182,6 +182,12 @@ class MissionReward:
             else:
                 # Payload ON but not over target → wasted power
                 r_mission -= self.cfg.w_idle_power
+        else:
+            # Payload is OFF. Check for "Sloth" (Sleeping when should be imaging)
+            deep_sleep = float(action.get("bus", 0)) > 0.5
+            if deep_sleep and valid_target and state.battery_soc > 0.9:
+                # Sat is over target with >90% battery but choosing to sleep → Sloth Penalty
+                r_mission -= self.cfg.w_sloth_penalty
 
         # ── Compose ────────────────────────────────────────────────
         total = r_survival + r_mission
