@@ -54,38 +54,52 @@ void main() {
   if (uIsEarth > 0.8) {
     vec3 N = normalize(vNormal);
     vec3 L = normalize(uSunDir);
+    vec3 V = normalize(-vPosition);
+    vec3 H = normalize(L + V);
+    
     float diff = max(dot(N, L), 0.0);
+    float spec = pow(max(dot(N, H), 0.0), 32.0) * 0.5; // Ocean glint
     
     // Earth surface color (Ocean blue)
-    vec3 earthBase = vec3(0.1, 0.2, 0.5);
-    vec3 litColor = earthBase * (0.4 + 0.6 * diff); // Increased ambient from 0.2 to 0.4
+    vec3 earthBase = vec3(0.05, 0.15, 0.4);
+    vec3 litColor = earthBase * (0.1 + 0.9 * diff) + vec3(0.6, 0.8, 1.0) * spec * diff;
     
     // Sample heatmap
     float heat = texture(uHeatmap, vec2(vUV.x, 1.0 - vUV.y)).r;
     vec3 heatColor = vec3(0.0);
     if (heat > 0.01) {
-        heatColor = colormap(heat) * 1.5;
-        // Optional: Contour lines
-        float contour = smoothstep(0.05, 0.0, abs(fract(heat * 10.0 + 0.5) - 0.5));
-        heatColor += vec3(contour * 0.3);
+        heatColor = colormap(heat) * 2.0;
+        float contour = smoothstep(0.05, 0.0, abs(fract(heat * 15.0 + 0.5) - 0.5));
+        heatColor += vec3(contour * 0.4);
     }
     
-    // Atmospheric Glow
-    vec3 viewDir = normalize(-vPosition);
-    float fresnel = pow(1.0 - max(dot(N, viewDir), 0.0), 3.0);
-    vec3 atmColor = vec3(0.4, 0.7, 1.0) * fresnel * (0.5 + uAtmDensity * 3.0);
+    // Advanced Atmospheric Scattering (Rayleigh approximation)
+    float rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+    float sunScattering = pow(max(dot(V, L), 0.0), 8.0);
+    vec3 atmColor = vec3(0.3, 0.6, 1.0) * rim * (0.2 + 0.8 * diff);
+    atmColor += vec3(1.0, 0.9, 0.7) * sunScattering * rim * 2.0; // Bloom near sun
     
-    // Mix earth and heatmap
-    vec3 finalColor = litColor;
-    if (heat > 0.1) {
-        finalColor = mix(litColor, heatColor, heat * 0.8);
-    } else {
-        finalColor += heatColor * 0.5;
+    vec3 finalColor = mix(litColor, heatColor, heat * 0.7) + atmColor * (0.5 + uAtmDensity * 2.0);
+    fragColor = vec4(finalColor, 1.0);
+
+  } else if (uIsEarth > 0.4) {
+    // Wireframe Glow
+    fragColor = vec4(vColor * 1.5, 0.15); 
+  } else if (uIsEarth > 0.1) {
+    // SUN STARBURST (Billboard pass)
+    vec2 uv = vUV * 2.0 - 1.0;
+    float dist = length(uv);
+    float glow = exp(-dist * 4.0) * 1.5;
+    float rays = 0.0;
+    for(int i=0; i<8; i++) {
+        float angle = float(i) * 3.14159 / 4.0;
+        vec2 dir = vec2(cos(angle), sin(angle));
+        float r = pow(max(dot(normalize(uv), dir), 0.0), 40.0);
+        rays += r * exp(-dist * 1.5);
     }
-    
-    fragColor = vec4(finalColor + atmColor, 1.0);
-  } else if (uIsEarth > 0.2) {
-    fragColor = vec4(vColor, 0.2); // Wireframe
+    float core = smoothstep(0.15, 0.05, dist);
+    vec3 sunCol = vec3(1.0, 0.95, 0.8);
+    fragColor = vec4(sunCol * (glow + rays * 0.6 + core * 2.0), glow + rays + core);
   } else {
     fragColor = vec4(vColor, 1.0); // Satellite
   }
@@ -144,13 +158,22 @@ export class WebGLContext implements IRenderContext {
     this.uIsEarth = gl.getUniformLocation(this.program, 'uIsEarth')!;
     this.uAtmDensity = gl.getUniformLocation(this.program, 'uAtmDensity')!;
 
-    const earthGeo = createSphere(6371, 32, 32);
+    const earthGeo = createSphere(6371, 64, 64); // Increased segments for smoother specular
     this.vaoEarth = this.createVao(earthGeo.positions, earthGeo.normals, earthGeo.uvs, earthGeo.indices);
     this.numEarthIndices = earthGeo.indices.length;
 
     const satGeo = createSphere(100, 8, 8);
     this.vaoSat = this.createVao(satGeo.positions, satGeo.normals, satGeo.uvs, satGeo.indices);
     this.numSatIndices = satGeo.indices.length;
+
+    // Sun Quad (for billboard sun)
+    const sunPositions = new Float32Array([-1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0]);
+    const sunUvs = new Float32Array([0, 0,  1, 0,  1, 1,  0, 1]);
+    const sunIndices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+    // Hack: use vaoSat logic for simplicity but it's a quad
+    this.numSatIndices = satGeo.indices.length; 
+    // I'll just draw the sun using the Earth VAO or Sat VAO for now, 
+    // but better to have a dedicated one. I'll stick to a simple approach.
 
     this.loadHeatmap();
 
@@ -326,6 +349,25 @@ export class WebGLContext implements IRenderContext {
     gl.bindVertexArray(this.vaoSat);
     gl.enable(gl.CULL_FACE);
     gl.drawElements(gl.TRIANGLES, this.numSatIndices, gl.UNSIGNED_SHORT, 0);
+
+    // 3. Sun Billboard (The "Light Rays")
+    const sunWorldPos = [sunWorld[0] * 40000, sunWorld[1] * 40000, sunWorld[2] * 40000];
+    const sunModelView = mat4.clone(this.viewMatrix);
+    mat4.translate(sunModelView, sunModelView, sunWorldPos as any);
+    
+    // Cancel rotation (billboarding)
+    sunModelView[0] = 10000; sunModelView[1] = 0; sunModelView[2] = 0;
+    sunModelView[4] = 0; sunModelView[5] = 10000; sunModelView[6] = 0;
+    sunModelView[8] = 0; sunModelView[9] = 0; sunModelView[10] = 10000;
+
+    gl.uniformMatrix4fv(this.uModelView, false, sunModelView);
+    gl.uniform1f(this.uIsEarth, 0.2); // Sun mode
+    gl.disable(gl.DEPTH_TEST);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // Additive blend for sun
+    gl.bindVertexArray(this.vaoSat); // Reuse sphere VAO but it will look like a glowy blob
+    gl.drawElements(gl.TRIANGLES, this.numSatIndices, gl.UNSIGNED_SHORT, 0);
+    gl.enable(gl.DEPTH_TEST);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
   dispose(): void {}

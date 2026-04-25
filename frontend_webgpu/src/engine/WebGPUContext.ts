@@ -57,35 +57,50 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   if (uniforms.isEarth > 0.8) {
     let N = normalize(in.normal);
     let L = normalize(uniforms.sunDir.xyz);
-    let diff = max(dot(N, L), 0.0);
+    let V = normalize(-in.viewPos);
+    let H = normalize(L + V);
     
-    let earthBase = vec3<f32>(0.1, 0.2, 0.5);
-    let litColor = earthBase * (0.4 + 0.6 * diff);
+    let diff = max(dot(N, L), 0.0);
+    let spec = pow(max(dot(N, H), 0.0), 32.0) * 0.5;
+    
+    let earthBase = vec3<f32>(0.05, 0.15, 0.4);
+    let litColor = earthBase * (0.1 + 0.9 * diff) + vec3<f32>(0.6, 0.8, 1.0) * spec * diff;
     
     let uvFlipped = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
     let heat = textureSample(heatmapTexture, heatmapSampler, uvFlipped).r;
     
     var heatColor = vec3<f32>(0.0);
     if (heat > 0.01) {
-        heatColor = colormap(heat) * 1.5;
-        let contour = smoothstep(0.05, 0.0, abs(fract(heat * 10.0 + 0.5) - 0.5));
-        heatColor += vec3<f32>(contour * 0.3);
+        heatColor = colormap(heat) * 2.0;
+        let contour = smoothstep(0.05, 0.0, abs(fract(heat * 15.0 + 0.5) - 0.5));
+        heatColor += vec3<f32>(contour * 0.4);
     }
     
-    let viewDir = normalize(-in.viewPos);
-    let fresnel = pow(1.0 - max(dot(N, viewDir), 0.0), 3.0);
-    let atmColor = vec3<f32>(0.4, 0.7, 1.0) * fresnel * (0.5 + uniforms.atmDensity * 3.0);
+    let rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+    let sunScattering = pow(max(dot(V, L), 0.0), 8.0);
+    var atmColor = vec3<f32>(0.3, 0.6, 1.0) * rim * (0.2 + 0.8 * diff);
+    atmColor += vec3<f32>(1.0, 0.9, 0.7) * sunScattering * rim * 2.0;
     
-    var finalColor = litColor;
-    if (heat > 0.1) {
-        finalColor = mix(litColor, heatColor, heat * 0.8);
-    } else {
-        finalColor += heatColor * 0.5;
+    let finalColor = mix(litColor, heatColor, heat * 0.7) + atmColor * (0.5 + uniforms.atmDensity * 2.0);
+    return vec4<f32>(finalColor, 1.0);
+
+  } else if (uniforms.isEarth > 0.4) {
+    return vec4<f32>(in.color.rgb * 1.5, 0.15);
+  } else if (uniforms.isEarth > 0.1) {
+    // SUN STARBURST
+    let uv = in.uv * 2.0 - 1.0;
+    let dist = length(uv);
+    let glow = exp(-dist * 4.0) * 1.5;
+    var rays = 0.0;
+    for(var i: i32 = 0; i < 8; i++) {
+        let angle = f32(i) * 3.14159 / 4.0;
+        let dir = vec2<f32>(cos(angle), sin(angle));
+        let r = pow(max(dot(normalize(uv), dir), 0.0), 40.0);
+        rays += r * exp(-dist * 1.5);
     }
-    
-    return vec4<f32>(finalColor + atmColor, 1.0);
-  } else if (uniforms.isEarth > 0.2) {
-    return vec4<f32>(in.color.rgb, 0.2);
+    let core = smoothstep(0.15, 0.05, dist);
+    let sunCol = vec3<f32>(1.0, 0.95, 0.8);
+    return vec4<f32>(sunCol * (glow + rays * 0.6 + core * 2.0), glow + rays + core);
   } else {
     return in.color;
   }
@@ -98,6 +113,7 @@ export class WebGPUContext implements IRenderContext {
   private format!: GPUTextureFormat;
   private solidPipeline!: GPURenderPipeline;
   private wirePipeline!: GPURenderPipeline;
+  private sunPipeline!: GPURenderPipeline;
 
   private earthVBO!: GPUBuffer;
   private earthVBN!: GPUBuffer;
@@ -184,7 +200,24 @@ export class WebGPUContext implements IRenderContext {
       depthStencil: { depthWriteEnabled: false, depthCompare: 'less', format: 'depth24plus' }
     });
 
-    const earthGeo = createSphere(6371, 32, 32);
+    this.sunPipeline = this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: vertexState,
+      fragment: {
+        ...fragmentState,
+        targets: [{
+          format: this.format,
+          blend: {
+            color: { srcFactor: 'src-alpha' as GPUBlendFactor, dstFactor: 'one' as GPUBlendFactor },
+            alpha: { srcFactor: 'one' as GPUBlendFactor, dstFactor: 'one' as GPUBlendFactor }
+          }
+        }]
+      },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: { depthWriteEnabled: false, depthCompare: 'less', format: 'depth24plus' }
+    });
+
+    const earthGeo = createSphere(6371, 64, 64);
     this.earthVBO = this.createBuffer(earthGeo.positions, GPUBufferUsage.VERTEX);
     this.earthVBN = this.createBuffer(earthGeo.normals, GPUBufferUsage.VERTEX);
     this.earthVBU = this.createBuffer(earthGeo.uvs, GPUBufferUsage.VERTEX);
@@ -201,6 +234,7 @@ export class WebGPUContext implements IRenderContext {
     this.earthUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.earthWireUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.satUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.sunUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     this.heatmapSampler = this.device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
     await this.loadHeatmap();
@@ -208,6 +242,7 @@ export class WebGPUContext implements IRenderContext {
     this.earthBindGroup = this.createBindGroup(this.earthUniformBuffer, this.solidPipeline);
     this.earthWireBindGroup = this.createBindGroup(this.earthWireUniformBuffer, this.wirePipeline);
     this.satBindGroup = this.createBindGroup(this.satUniformBuffer, this.solidPipeline);
+    this.sunBindGroup = this.createBindGroup(this.sunUniformBuffer, this.sunPipeline);
   }
 
   private createBindGroup(buffer: GPUBuffer, pipeline: GPURenderPipeline): GPUBindGroup {
@@ -354,6 +389,14 @@ export class WebGPUContext implements IRenderContext {
     mat4.translate(satModelView, satModelView, this.satPosition);
     updateUniform(this.satUniformBuffer, satModelView, this.satColor, 0.0);
 
+    const sunWorldPos = [sunWorld[0] * 40000, sunWorld[1] * 40000, sunWorld[2] * 40000];
+    const sunModelView = mat4.clone(this.viewMatrix);
+    mat4.translate(sunModelView, sunModelView, sunWorldPos as any);
+    sunModelView[0] = 10000; sunModelView[1] = 0; sunModelView[2] = 0;
+    sunModelView[4] = 0; sunModelView[5] = 10000; sunModelView[6] = 0;
+    sunModelView[8] = 0; sunModelView[9] = 0; sunModelView[10] = 10000;
+    updateUniform(this.sunUniformBuffer, sunModelView, vec3.fromValues(1,1,1), 0.2);
+
     const commandEncoder = this.device.createCommandEncoder();
     const renderPass = commandEncoder.beginRenderPass({
       colorAttachments: [{
@@ -389,6 +432,14 @@ export class WebGPUContext implements IRenderContext {
     renderPass.setPipeline(this.solidPipeline);
     renderPass.setBindGroup(0, this.satBindGroup);
     renderPass.setVertexBuffer(0, this.satVBO);
+    renderPass.setVertexBuffer(1, this.satVBN);
+    renderPass.setVertexBuffer(2, this.satVBU);
+    renderPass.setIndexBuffer(this.satEBO, 'uint16');
+    renderPass.drawIndexed(this.numSatIndices);
+
+    renderPass.setPipeline(this.sunPipeline);
+    renderPass.setBindGroup(0, this.sunBindGroup);
+    renderPass.setVertexBuffer(0, this.satVBO); // Reuse sphere for glow
     renderPass.setVertexBuffer(1, this.satVBN);
     renderPass.setVertexBuffer(2, this.satVBU);
     renderPass.setIndexBuffer(this.satEBO, 'uint16');

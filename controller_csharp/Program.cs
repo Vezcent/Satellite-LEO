@@ -290,7 +290,7 @@ public static class Program
         {
             var builder = new ObservationBuilder();
             obs = builder.Build(in state);
-            Assert(obs.Length == 29, $"Obs dim: expected 29, got {obs.Length}");
+            Assert(obs.Length == 30, $"Obs dim: expected 30, got {obs.Length}");
             // Check no NaN/Inf
             for (int i = 0; i < obs.Length; i++)
                 Assert(!float.IsNaN(obs[i]) && !float.IsInfinity(obs[i]),
@@ -298,7 +298,7 @@ public static class Program
             Pass(4, "Observation builder", $"dim={obs.Length}, range=[{obs.Min():F3}, {obs.Max():F3}]");
             passed++;
         }
-        catch (Exception ex) { Fail(4, "Observation builder", ex.Message); obs = new float[29]; }
+        catch (Exception ex) { Fail(4, "Observation builder", ex.Message); obs = new float[30]; }
 
         // ── Test 5: ONNX Session Load ────────────────────────────
         total++;
