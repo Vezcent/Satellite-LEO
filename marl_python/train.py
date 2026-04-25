@@ -11,9 +11,9 @@ from typing import Dict, List
 # Add path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import TrainConfig, ObsConfig, RewardConfig, MAPPOConfig, EnvConfig
+from config import TrainConfig, ObsConfig, RewardConfig, MissionRewardConfig, MAPPOConfig, EnvConfig
 from mappo import SharedActorCritic, RolloutBuffer, ppo_update
-from env_wrapper import SMASWrapper
+from env_wrapper import SatelliteEnv
 from observation import ObservationBuilder
 from reward import SurvivalReward, MissionReward
 
@@ -21,6 +21,7 @@ def train(train_cfg: TrainConfig,
           env_cfg: EnvConfig,
           obs_cfg: ObsConfig,
           reward_cfg: RewardConfig,
+          mission_rew_cfg: MissionRewardConfig,
           mappo_cfg: MAPPOConfig,
           device: str = "cpu",
           phase: int = 1):
@@ -30,29 +31,29 @@ def train(train_cfg: TrainConfig,
     print(f"  S-MAS Multi-Agent Training — Phase {phase}")
     print("=" * 70)
     print(f"  Agents: 3 (Independent Trunks)")
-    print(f"  Envs:   {train_cfg.num_envs}")
+    print(f"  Envs:   {env_cfg.num_envs}")
     print(f"  Device: {device}")
-    print(f"  Rewards: alive={reward_cfg.w_alive:.1f} mission={reward_cfg.w_valid_target:.1f} sloth={-reward_cfg.w_sloth_penalty:.1f}")
+    print(f"  Rewards: alive={reward_cfg.w_alive:.1f} mission={mission_rew_cfg.w_valid_target:.1f} sloth={-mission_rew_cfg.w_sloth_penalty:.1f}")
     print("=" * 70 + "\n")
 
     # ── Initialize environments ──────────────────────────────────
-    envs = [SMASWrapper(env_cfg) for _ in range(train_cfg.num_envs)]
+    envs = [SatelliteEnv(env_cfg) for _ in range(env_cfg.num_envs)]
     obs_builder = ObservationBuilder()
-    reward_fn = SurvivalReward(reward_cfg) if phase < 3 else MissionReward(reward_cfg)
+    reward_fn = SurvivalReward(reward_cfg) if phase < 3 else MissionReward(reward_cfg, mission_rew_cfg)
 
     obs_list = [obs_builder.build(e.reset(randomize=True)) for e in envs]
-    done_list = [False] * train_cfg.num_envs
+    done_list = [False] * env_cfg.num_envs
     
     total_steps = 0
     episode_count = 0
     
     # Brain
     model = SharedActorCritic(obs_cfg.obs_dim, mappo_cfg).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=mappo_cfg.lr)
     
-    # Buffer: Stores data for all environments combined
-    # Capacity = rollout_steps * num_envs
-    buffer = RolloutBuffer(mappo_cfg.rollout_steps * train_cfg.num_envs, obs_cfg.obs_dim, 4, device)
+    # Buffers: One for each environment to prevent GAE timeline mixing
+    buffers = [RolloutBuffer(mappo_cfg.rollout_steps, obs_cfg.obs_dim, 4) 
+               for _ in range(env_cfg.num_envs)]
 
     # ── Main training loop ─────────────────────────────────────────
     while total_steps < train_cfg.total_timesteps:
@@ -71,7 +72,7 @@ def train(train_cfg: TrainConfig,
         # We keep running until Env[0] is done or we hit a step limit
         # This is a simple way to track "episodes" in a multi-env setup
         while not done_list[0]:
-            buffer.reset()
+            for b in buffers: b.reset()
             
             # ── Collect rollout ──
             for _ in range(mappo_cfg.rollout_steps):
@@ -92,7 +93,7 @@ def train(train_cfg: TrainConfig,
                 mis_lps  = out["mission_log_prob"].cpu().numpy()
 
                 # 2. Step all envs
-                for i in range(train_cfg.num_envs):
+                for i in range(env_cfg.num_envs):
                     if done_list[i]: continue
 
                     action_dict = {
@@ -120,9 +121,9 @@ def train(train_cfg: TrainConfig,
                     r_scaled = r * 0.001
                     if i == 0: episode_reward += r
 
-                    buffer.push(obs_list[i], raw_navs[i], float(bus_acts[i]), r_scaled, values[i],
-                                nav_lps[i], bus_lps[i], done,
-                                mission_act=float(mis_acts[i]), mission_lp=mis_lps[i])
+                    buffers[i].push(obs_list[i], raw_navs[i], float(bus_acts[i]), r_scaled, values[i],
+                                    nav_lps[i], bus_lps[i], done,
+                                    mission_act=float(mis_acts[i]), mission_lp=mis_lps[i])
 
                     obs_list[i] = next_obs
                     done_list[i] = done
@@ -132,19 +133,17 @@ def train(train_cfg: TrainConfig,
                 if all(done_list): break
             
             # ── PPO Update ──
-            # Estimate last value for GAE
-            with torch.no_grad():
-                # We use the value of the first environment that isn't done
-                valid_idx = 0
-                for idx, d in enumerate(done_list):
-                    if not d:
-                        valid_idx = idx
-                        break
-                last_obs_tensor = torch.tensor(obs_list[valid_idx], device=device).unsqueeze(0)
-                last_val = model.get_value(last_obs_tensor).item() if not done_list[valid_idx] else 0.0
+            # Estimate last value and compute GAE for each environment separately
+            for i in range(env_cfg.num_envs):
+                if done_list[i]:
+                    last_val = 0.0
+                else:
+                    with torch.no_grad():
+                        last_obs_tensor = torch.tensor(obs_list[i], device=device).unsqueeze(0)
+                        last_val = model.get_value(last_obs_tensor).item()
+                buffers[i].compute_gae(last_val, mappo_cfg.gamma, mappo_cfg.gae_lambda)
 
-            buffer.compute_gae(last_val, mappo_cfg.gamma, mappo_cfg.gae_lambda)
-            losses = ppo_update(model, optimizer, buffer, mappo_cfg, device)
+            losses = ppo_update(model, optimizer, buffers, mappo_cfg, device)
             
             ep_policy_loss += losses.get("policy_loss", 0)
             ep_value_loss += losses.get("value_loss", 0)
@@ -166,9 +165,9 @@ def train(train_cfg: TrainConfig,
         base = (f"  Ep {episode_count:5d} | "
                 f"Steps {total_steps:8,d} | "
                 f"R {episode_reward:8.1f} | "
-                f"SoC {envs[0].last_state.battery_soc*100:5.1f}% | "
-                f"Alt {envs[0].last_state.altitude_km:6.1f}km | "
-                f"FDIR {envs[0].last_state.fdir_mode} | "
+                f"SoC {envs[0].state.battery_soc*100:5.1f}% | "
+                f"Alt {envs[0].state.altitude_km:6.1f}km | "
+                f"FDIR {envs[0].state.fdir_mode} | "
                 f"pi {avg_pi:.4f} | "
                 f"v {avg_v:.4f} | "
                 f"H {avg_ent:.3f}")
@@ -191,7 +190,7 @@ def train(train_cfg: TrainConfig,
             print(f"    â†’ Checkpoint saved: {path}")
 
         # Reset for next episode
-        for i in range(train_cfg.num_envs):
+        for i in range(env_cfg.num_envs):
             obs_list[i] = obs_builder.build(envs[i].reset(randomize=True))
             done_list[i] = False
 
@@ -206,14 +205,19 @@ def main():
     parser.add_argument("--phase", type=int, default=1)
     args = parser.parse_args()
 
+    # Normalize device name ("gpu" → "cuda")
+    if args.device.lower() == "gpu":
+        args.device = "cuda"
+
     # Load configs
-    train_cfg = TrainConfig(total_timesteps=args.total_steps, lr=args.lr, device=args.device)
+    train_cfg = TrainConfig(total_timesteps=args.total_steps, device=args.device)
     env_cfg = EnvConfig()
     obs_cfg = ObsConfig()
     reward_cfg = RewardConfig()
-    mappo_cfg = MAPPOConfig(rollout_steps=args.rollout_steps)
+    mission_rew_cfg = MissionRewardConfig()
+    mappo_cfg = MAPPOConfig(rollout_steps=args.rollout_steps, lr=args.lr)
 
-    train(train_cfg, env_cfg, obs_cfg, reward_cfg, mappo_cfg, args.device, args.phase)
+    train(train_cfg, env_cfg, obs_cfg, reward_cfg, mission_rew_cfg, mappo_cfg, args.device, args.phase)
 
 if __name__ == "__main__":
     main()

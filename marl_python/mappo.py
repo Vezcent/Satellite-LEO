@@ -335,31 +335,57 @@ class RolloutBuffer:
 #  PPO Update
 # ═══════════════════════════════════════════════════════════════════
 
+from typing import Dict, Union, List
+
 def ppo_update(model: SharedActorCritic,
                optimizer: torch.optim.Optimizer,
-               buffer: RolloutBuffer,
+               buffers: Union[RolloutBuffer, List[RolloutBuffer]],
                cfg: MAPPOConfig,
                device: str = "cpu") -> Dict[str, float]:
     """
-    Run PPO update epochs on the rollout buffer.
+    Run PPO update epochs on the rollout buffer(s).
     Returns dict of mean losses for logging.
     """
+    if not isinstance(buffers, list):
+        buffers = [buffers]
+
+    # Merge data from all environments
+    all_obs = np.concatenate([b.obs[:b.ptr] for b in buffers], axis=0)
+    all_nav_acts = np.concatenate([b.nav_acts[:b.ptr] for b in buffers], axis=0)
+    all_bus_acts = np.concatenate([b.bus_acts[:b.ptr] for b in buffers], axis=0)
+    all_mission_acts = np.concatenate([b.mission_acts[:b.ptr] for b in buffers], axis=0)
+    all_nav_lps = np.concatenate([b.nav_lps[:b.ptr] for b in buffers], axis=0)
+    all_bus_lps = np.concatenate([b.bus_lps[:b.ptr] for b in buffers], axis=0)
+    all_mission_lps = np.concatenate([b.mission_lps[:b.ptr] for b in buffers], axis=0)
+    all_returns = np.concatenate([b.returns[:b.ptr] for b in buffers], axis=0)
+    all_advantages = np.concatenate([b.advantages[:b.ptr] for b in buffers], axis=0)
+
+    total_size = len(all_obs)
+
     total_policy_loss = 0.0
     total_value_loss  = 0.0
     total_entropy     = 0.0
     num_updates       = 0
 
     for _epoch in range(cfg.num_epochs):
-        for batch in buffer.get_batches(cfg.batch_size, device):
-            obs       = batch["obs"]
-            nav_a     = batch["nav_acts"]
-            bus_a     = batch["bus_acts"]
-            mission_a = batch["mission_acts"]
-            old_nav   = batch["nav_lps"]
-            old_bus   = batch["bus_lps"]
-            old_mis   = batch["mission_lps"]
-            ret       = batch["returns"]
-            adv       = batch["advantages"]
+        indices = np.arange(total_size)
+        np.random.shuffle(indices)
+
+        for start in range(0, total_size, cfg.batch_size):
+            end = start + cfg.batch_size
+            if end > total_size:
+                break
+            idx = indices[start:end]
+
+            obs       = torch.tensor(all_obs[idx], device=device)
+            nav_a     = torch.tensor(all_nav_acts[idx], device=device)
+            bus_a     = torch.tensor(all_bus_acts[idx], device=device)
+            mission_a = torch.tensor(all_mission_acts[idx], device=device)
+            old_nav   = torch.tensor(all_nav_lps[idx], device=device)
+            old_bus   = torch.tensor(all_bus_lps[idx], device=device)
+            old_mis   = torch.tensor(all_mission_lps[idx], device=device)
+            ret       = torch.tensor(all_returns[idx], device=device)
+            adv       = torch.tensor(all_advantages[idx], device=device)
 
             # Normalise advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
