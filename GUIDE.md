@@ -13,15 +13,15 @@ cd ../marl_python
 python -m venv ../.venv && ../.venv/Scripts/activate
 pip install -r ../requirements.txt
 
-# 3. Train agents
-python train.py --phase 3 --total_steps 500000 --device cpu
+# 3. Train agents (recommended 10M steps for mission)
+python train.py --phase 3 --device cpu
 
-# 4. Export & deploy
+# 4. Export & deploy (with numerical parity check)
 python export_onnx.py --checkpoint checkpoints/mappo_phase3_best.pt
-Copy-Item onnx_export/*.onnx ../controller_csharp/models/
 
-# 5. Run
-cd ../controller_csharp && dotnet run -c Release -- --data-dir "../preprocessed-data" --model-dir "models" --steps 17280
+# 5. Run & Analyze
+cd ../controller_csharp && dotnet run -c Release -- --data-dir "../preprocessed-data" --model-dir "models" --steps 1000000 --skip 5000
+python ../result/visualize/visualize.py
 ```
 
 ---
@@ -43,7 +43,8 @@ cd ../controller_csharp && dotnet run -c Release -- --data-dir "../preprocessed-
 | **Bus power draw** | `backend_cpp/include/constants.h:27` | `SAT_BUS_POWER_W = 30.0` |
 | **Target altitude** | `backend_cpp/include/constants.h:31` | `NOMINAL_ALT_KM = 600.0` |
 | **Reentry threshold** | `backend_cpp/include/constants.h:32` | `REENTRY_ALT_KM = 200.0` |
-| **Sensor noise** | `backend_cpp/include/constants.h:47` | `ACTUATOR_ERROR = 0.05` (±5%) |
+| **Observation Dim** | `marl_python/config.py:44` | `obs_dim = 30` (includes `vz_norm` for 3D context) |
+| **Agent Trunks** | `marl_python/config.py:111` | `shared_policy = False` (Independent brains for Nav/Mission) |
 | **Battery degradation** | `backend_cpp/include/constants.h:52` | `BATT_CYCLE_DEGRAD = 0.00005` |
 | **Cd drift rate** | `backend_cpp/include/constants.h:60` | `CD_DRIFT_SIGMA = 0.001` |
 | **Comms loss timeout** | `backend_cpp/include/constants.h:43` | `TELEMETRY_LOSS_S = 72h` |
@@ -64,11 +65,11 @@ cd ../controller_csharp && dotnet run -c Release -- --data-dir "../preprocessed-
 | `w_dod` | `marl_python/config.py:67` | 2.0 | Penalty for battery depth-of-discharge |
 | `w_fdir` | `marl_python/config.py:68` | 100.0 | Penalty when FDIR overrides agents |
 | `w_fatal` | `marl_python/config.py:69` | 1000.0 | Penalty on terminal failure |
-| `w_alt` | `marl_python/config.py:70` | 10.0 | Penalty for altitude deviation |
-| `target_alt_km` | `marl_python/config.py:71` | 600.0 | Nominal target altitude |
-| `alt_deadband` | `marl_python/config.py:72` | 10.0 | Tolerance band (±10km) |
-| `w_valid_target` | `marl_python/config.py:76` | 50.0 | Reward for valid imaging |
-| `w_saa_penalty` | `marl_python/config.py:76` | 500.0 | Penalty for payload ON in SAA |
+| `w_alt` | `marl_python/config.py:70` | 50.0 | Penalty for altitude deviation |
+| `alt_deadband` | `marl_python/config.py:72` | 5.0 | Tolerance band (±5km) |
+| `w_valid_target` | `marl_python/config.py:78` | 500.0 | Reward for valid imaging (high value = active mission) |
+| `w_saa_penalty` | `marl_python/config.py:79` | 1000.0 | Penalty for payload ON in SAA |
+| `w_sloth_penalty` | `marl_python/config.py:81` | 200.0 | Penalty for sleeping when battery is full over target |
 
 ### Training Hyperparameters
 
@@ -176,8 +177,11 @@ marl_python/
 ├── env_wrapper.py     ← C++ DLL bridge via ctypes (rarely edit)
 ├── observation.py     ← 29-dim observation normalization (rarely edit)
 ├── reward.py          ← Reward functions (edit to reshape rewards)
-├── export_onnx.py     ← PyTorch → ONNX converter (edit if network changes)
+├── export_onnx.py     ← PyTorch → ONNX converter (with numerical parity check)
 ├── validate_tle.py    ← TLE validation script
+│
+result/visualize/
+├── visualize.py       ← Offline analysis tool (generates PNG plots and mission CSVs)
 
 backend_cpp/
 ├── include/
