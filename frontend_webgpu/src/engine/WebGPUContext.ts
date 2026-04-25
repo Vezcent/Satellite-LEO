@@ -7,30 +7,68 @@ const wgslSource = `
 struct Uniforms {
   modelViewMatrix : mat4x4<f32>,
   projectionMatrix : mat4x4<f32>,
+  normalMatrix : mat4x4<f32>,
   color: vec4<f32>,
+  sunDir: vec4<f32>,
+  isEarth: f32,
+  atmDensity: f32,
+  pad2: f32, pad3: f32,
 };
 
 @binding(0) @group(0) var<uniform> uniforms : Uniforms;
+@binding(1) @group(0) var heatmapSampler : sampler;
+@binding(2) @group(0) var heatmapTexture : texture_2d<f32>;
+
+struct VertexInput {
+  @location(0) position : vec3<f32>,
+  @location(1) normal : vec3<f32>,
+  @location(2) uv : vec2<f32>,
+};
 
 struct VertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0) color : vec4<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) uv: vec2<f32>,
+  @location(3) viewPos: vec3<f32>,
 };
 
 @vertex
-fn vs_main(@location(0) position : vec3<f32>) -> VertexOutput {
+fn vs_main(in: VertexInput) -> VertexOutput {
   var output : VertexOutput;
-  output.position = uniforms.projectionMatrix * uniforms.modelViewMatrix * vec4<f32>(position, 1.0);
-  
-  let depth = (output.position.z / output.position.w + 1.0) * 0.5;
-  output.color = uniforms.color * vec4<f32>(vec3<f32>(1.2 - depth), 1.0);
-  
+  let pos = uniforms.modelViewMatrix * vec4<f32>(in.position, 1.0);
+  output.position = uniforms.projectionMatrix * pos;
+  output.viewPos = pos.xyz;
+  output.normal = (uniforms.normalMatrix * vec4<f32>(in.normal, 0.0)).xyz;
+  output.uv = in.uv;
+  output.color = uniforms.color;
   return output;
 }
 
 @fragment
-fn fs_main(@location(0) color : vec4<f32>) -> @location(0) vec4<f32> {
-  return color;
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+  if (uniforms.isEarth > 0.8) {
+    let N = normalize(in.normal);
+    let L = normalize(uniforms.sunDir.xyz);
+    let diff = max(dot(N, L), 0.0);
+    
+    let earthBase = vec3<f32>(0.05, 0.15, 0.4);
+    let litColor = earthBase * (0.2 + 0.8 * diff);
+    
+    let uvFlipped = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+    let heat = textureSample(heatmapTexture, heatmapSampler, uvFlipped).r;
+    let heatColor = vec3<f32>(1.0, 0.2, 0.0) * heat * 4.0;
+    
+    let viewDir = normalize(-in.viewPos);
+    let fresnel = pow(1.0 - max(dot(N, viewDir), 0.0), 3.0);
+    let atmColor = vec3<f32>(0.3, 0.6, 1.0) * fresnel * (0.5 + uniforms.atmDensity * 2.0);
+    
+    return vec4<f32>(litColor + heatColor + atmColor, 1.0);
+  } else if (uniforms.isEarth > 0.2) {
+    return vec4<f32>(in.color.rgb, 0.2);
+  } else {
+    return in.color;
+  }
 }
 `;
 
@@ -38,30 +76,39 @@ export class WebGPUContext implements IRenderContext {
   private device!: GPUDevice;
   private context!: GPUCanvasContext;
   private format!: GPUTextureFormat;
-  private pipeline!: GPURenderPipeline;
+  private solidPipeline!: GPURenderPipeline;
+  private wirePipeline!: GPURenderPipeline;
 
   private earthVBO!: GPUBuffer;
+  private earthVBN!: GPUBuffer;
+  private earthVBU!: GPUBuffer;
   private earthEBO!: GPUBuffer;
   private numEarthIndices = 0;
 
   private satVBO!: GPUBuffer;
+  private satVBN!: GPUBuffer;
+  private satVBU!: GPUBuffer;
   private satEBO!: GPUBuffer;
   private numSatIndices = 0;
 
   private depthTexture!: GPUTexture;
+  private heatmapTexture!: GPUTexture;
+  private heatmapSampler!: GPUSampler;
 
   private projMatrix = mat4.create();
   private viewMatrix = mat4.create();
 
-  // Uniforms: [mat4(64), mat4(64), vec4(16)] = 144 bytes per object
   private earthUniformBuffer!: GPUBuffer;
-  private earthBindGroup!: GPUBindGroup;
-
+  private earthWireUniformBuffer!: GPUBuffer;
   private satUniformBuffer!: GPUBuffer;
+  
+  private earthBindGroup!: GPUBindGroup;
+  private earthWireBindGroup!: GPUBindGroup;
   private satBindGroup!: GPUBindGroup;
 
   private satPosition = vec3.fromValues(0, 0, 0);
   private satColor = vec3.fromValues(0.2, 0.5, 1.0);
+  private currentAtmDensity = 0;
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
     const adapter = await navigator.gpu.requestAdapter();
@@ -76,69 +123,117 @@ export class WebGPUContext implements IRenderContext {
       alphaMode: 'premultiplied'
     });
 
-    // Create shader module
     const shaderModule = this.device.createShaderModule({ code: wgslSource });
-
-    // Setup Depth Texture
     this.resizeDepthTexture(canvas.width, canvas.height);
 
-    // Create Pipeline
-    this.pipeline = this.device.createRenderPipeline({
+    const vertexState = {
+      module: shaderModule,
+      entryPoint: 'vs_main',
+      buffers: [
+        { arrayStride: 12, attributes: [{ format: 'float32x3' as GPUVertexFormat, offset: 0, shaderLocation: 0 }] },
+        { arrayStride: 12, attributes: [{ format: 'float32x3' as GPUVertexFormat, offset: 0, shaderLocation: 1 }] },
+        { arrayStride: 8, attributes: [{ format: 'float32x2' as GPUVertexFormat, offset: 0, shaderLocation: 2 }] }
+      ]
+    };
+
+    const fragmentState = {
+      module: shaderModule,
+      entryPoint: 'fs_main',
+      targets: [{
+        format: this.format,
+        blend: {
+          color: { srcFactor: 'src-alpha' as GPUBlendFactor, dstFactor: 'one-minus-src-alpha' as GPUBlendFactor },
+          alpha: { srcFactor: 'one' as GPUBlendFactor, dstFactor: 'one-minus-src-alpha' as GPUBlendFactor }
+        }
+      }]
+    };
+
+    this.solidPipeline = this.device.createRenderPipeline({
       layout: 'auto',
-      vertex: {
-        module: shaderModule,
-        entryPoint: 'vs_main',
-        buffers: [{
-          arrayStride: 3 * 4,
-          attributes: [{ format: 'float32x3', offset: 0, shaderLocation: 0 }]
-        }]
-      },
-      fragment: {
-        module: shaderModule,
-        entryPoint: 'fs_main',
-        targets: [{ format: this.format }]
-      },
-      primitive: {
-        topology: 'line-list', // Used for wireframe earth
-        cullMode: 'back'
-      },
-      depthStencil: {
-        depthWriteEnabled: true,
-        depthCompare: 'less',
-        format: 'depth24plus'
-      }
+      vertex: vertexState,
+      fragment: fragmentState,
+      primitive: { topology: 'triangle-list', cullMode: 'back' },
+      depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus' }
     });
 
-    // Earth Geometry
+    this.wirePipeline = this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: vertexState,
+      fragment: fragmentState,
+      primitive: { topology: 'line-list' },
+      depthStencil: { depthWriteEnabled: false, depthCompare: 'less', format: 'depth24plus' }
+    });
+
     const earthGeo = createSphere(6371, 32, 32);
     this.earthVBO = this.createBuffer(earthGeo.positions, GPUBufferUsage.VERTEX);
+    this.earthVBN = this.createBuffer(earthGeo.normals, GPUBufferUsage.VERTEX);
+    this.earthVBU = this.createBuffer(earthGeo.uvs, GPUBufferUsage.VERTEX);
     this.earthEBO = this.createBuffer(earthGeo.indices, GPUBufferUsage.INDEX);
     this.numEarthIndices = earthGeo.indices.length;
 
-    // Sat Geometry
-    const satGeo = createSphere(150, 8, 8); // slightly larger for visibility
+    const satGeo = createSphere(150, 8, 8);
     this.satVBO = this.createBuffer(satGeo.positions, GPUBufferUsage.VERTEX);
+    this.satVBN = this.createBuffer(satGeo.normals, GPUBufferUsage.VERTEX);
+    this.satVBU = this.createBuffer(satGeo.uvs, GPUBufferUsage.VERTEX);
     this.satEBO = this.createBuffer(satGeo.indices, GPUBufferUsage.INDEX);
     this.numSatIndices = satGeo.indices.length;
 
-    // Uniform Buffers
-    this.earthUniformBuffer = this.device.createBuffer({
-      size: 144, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    this.earthUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.earthWireUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.satUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+    this.heatmapSampler = this.device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
+    await this.loadHeatmap();
+
+    this.earthBindGroup = this.createBindGroup(this.earthUniformBuffer, this.solidPipeline);
+    this.earthWireBindGroup = this.createBindGroup(this.earthWireUniformBuffer, this.wirePipeline);
+    this.satBindGroup = this.createBindGroup(this.satUniformBuffer, this.solidPipeline);
+  }
+
+  private createBindGroup(buffer: GPUBuffer, pipeline: GPURenderPipeline): GPUBindGroup {
+    return this.device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer } },
+        { binding: 1, resource: this.heatmapSampler },
+        { binding: 2, resource: this.heatmapTexture.createView() }
+      ]
     });
-    this.satUniformBuffer = this.device.createBuffer({
-      size: 144, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+  }
+
+  private async loadHeatmap() {
+    this.heatmapTexture = this.device.createTexture({
+      size: [121, 90, 1],
+      format: 'r8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
     });
 
-    // Bind Groups
-    this.earthBindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: this.earthUniformBuffer } }]
-    });
-
-    this.satBindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: this.satUniformBuffer } }]
-    });
+    try {
+      const res = await fetch('/data/saa_heatmap_600km.csv');
+      const text = await res.text();
+      const lines = text.trim().split(/\r?\n/).slice(1);
+      const w = 121, h = 90;
+      const data = new Float32Array(w * h);
+      let maxFlux = 0;
+      for (let i = 0; i < lines.length && i < w*h; i++) {
+        const parts = lines[i].split(',');
+        if (parts.length >= 4) {
+          const flux = parseFloat(parts[2]) + parseFloat(parts[3]);
+          data[i] = flux;
+          if (flux > maxFlux) maxFlux = flux;
+        }
+      }
+      const ui8Data = new Uint8Array(w * h);
+      if (maxFlux > 0) {
+        for (let i = 0; i < data.length; i++) {
+          const val = data[i] / maxFlux;
+          ui8Data[i] = Math.floor(Math.pow(val, 0.4) * 255);
+        }
+      }
+      this.device.queue.writeTexture({ texture: this.heatmapTexture }, ui8Data, { bytesPerRow: w }, [w, h, 1]);
+    } catch (e) {
+      console.error("Failed to load heatmap", e);
+    }
   }
 
   private resizeDepthTexture(width: number, height: number) {
@@ -178,15 +273,12 @@ export class WebGPUContext implements IRenderContext {
     this.satPosition[1] = z;
     this.satPosition[2] = -y;
 
-    if (data.fdirMode === 2) { // Safe
-      vec3.set(this.satColor, 1.0, 0.2, 0.2);
-    } else if (data.fdirMode === 1) { // Degraded
-      vec3.set(this.satColor, 1.0, 0.7, 0.1);
-    } else if (data.payloadOn) { // Payload ON
-      vec3.set(this.satColor, 0.1, 1.0, 0.4);
-    } else { // Nominal
-      vec3.set(this.satColor, 0.2, 0.5, 1.0);
-    }
+    if (data.fdirMode === 2) { vec3.set(this.satColor, 1.0, 0.2, 0.2); }
+    else if (data.fdirMode === 1) { vec3.set(this.satColor, 1.0, 0.7, 0.1); }
+    else if (data.payloadOn) { vec3.set(this.satColor, 0.1, 1.0, 0.4); }
+    else { vec3.set(this.satColor, 0.2, 0.5, 1.0); }
+
+    this.currentAtmDensity = data.atmDensity;
   }
 
   render(time: number): void {
@@ -198,41 +290,51 @@ export class WebGPUContext implements IRenderContext {
     }
 
     const aspect = canvas.width / canvas.height;
-    mat4.perspective(this.projMatrix, 45 * Math.PI / 180, aspect, 100.0, 30000.0);
+    mat4.perspective(this.projMatrix, 45 * Math.PI / 180, aspect, 100.0, 50000.0);
 
     const camAngle = time * 0.0001;
-    const camRadius = 15000;
+    const camRadius = 25000;
     mat4.lookAt(this.viewMatrix,
-      [Math.cos(camAngle) * camRadius, 4000, Math.sin(camAngle) * camRadius],
+      [Math.cos(camAngle) * camRadius, 5000, Math.sin(camAngle) * camRadius],
       [0, 0, 0],
       [0, 1, 0]
     );
 
+    const sunDir = new Float32Array([1.0, 0.2, 0.5, 0.0]);
+    const normDensity = Math.min(Math.max((Math.log10(this.currentAtmDensity + 1e-20) + 15) / 5.0, 0.0), 1.0);
+
     // Update Earth Uniforms
     const earthModelView = mat4.clone(this.viewMatrix);
     mat4.rotateY(earthModelView, earthModelView, time * 0.00005);
-    const earthUniformData = new Float32Array(36);
-    earthUniformData.set(earthModelView, 0);
-    earthUniformData.set(this.projMatrix, 16);
-    earthUniformData.set([0.35, 0.50, 0.90, 1.0], 32); // Brighter cyan-blue wireframe
-    this.device.queue.writeBuffer(this.earthUniformBuffer, 0, earthUniformData);
+    const normalMatrix = mat4.create();
+    mat4.invert(normalMatrix, earthModelView);
+    mat4.transpose(normalMatrix, normalMatrix);
 
-    // Update Sat Uniforms
+    const updateUniform = (buffer: GPUBuffer, mv: mat4, color: vec3, isEarth: number) => {
+      const data = new Float32Array(60); 
+      data.set(mv, 0);
+      data.set(this.projMatrix, 16);
+      data.set(normalMatrix, 32);
+      data.set([...color, 1.0], 48);
+      data.set(sunDir, 52);
+      data.set([isEarth, normDensity, 0, 0], 56);
+      this.device.queue.writeBuffer(buffer, 0, data);
+    };
+
+    updateUniform(this.earthUniformBuffer, earthModelView, vec3.fromValues(1,1,1), 1.0);
+    const wireModelView = mat4.clone(earthModelView);
+    mat4.scale(wireModelView, wireModelView, [1.002, 1.002, 1.002]);
+    updateUniform(this.earthWireUniformBuffer, wireModelView, vec3.fromValues(0.15, 0.35, 0.6), 0.5);
+
     const satModelView = mat4.clone(this.viewMatrix);
     mat4.translate(satModelView, satModelView, this.satPosition);
-    // Expand sat rendering locally
-    const satUniformData = new Float32Array(36);
-    satUniformData.set(satModelView, 0);
-    satUniformData.set(this.projMatrix, 16);
-    satUniformData.set([...this.satColor, 1.0], 32);
-    this.device.queue.writeBuffer(this.satUniformBuffer, 0, satUniformData);
+    updateUniform(this.satUniformBuffer, satModelView, this.satColor, 0.0);
 
-    // Render Pass
     const commandEncoder = this.device.createCommandEncoder();
     const renderPass = commandEncoder.beginRenderPass({
       colorAttachments: [{
         view: this.context.getCurrentTexture().createView(),
-        clearValue: { r: 0.02, g: 0.02, b: 0.04, a: 1.0 },
+        clearValue: { r: 0.01, g: 0.01, b: 0.02, a: 1.0 },
         loadOp: 'clear',
         storeOp: 'store'
       }],
@@ -244,20 +346,27 @@ export class WebGPUContext implements IRenderContext {
       }
     });
 
-    renderPass.setPipeline(this.pipeline);
-
-    // Draw Earth
+    renderPass.setPipeline(this.solidPipeline);
     renderPass.setBindGroup(0, this.earthBindGroup);
     renderPass.setVertexBuffer(0, this.earthVBO);
+    renderPass.setVertexBuffer(1, this.earthVBN);
+    renderPass.setVertexBuffer(2, this.earthVBU);
     renderPass.setIndexBuffer(this.earthEBO, 'uint16');
     renderPass.drawIndexed(this.numEarthIndices);
 
-    // Draw Satellite
-    // Note: since our pipeline topology is 'line-list' (for wireframe earth),
-    // the satellite will also render as line-list. In a real app we'd use multiple pipelines.
-    // This gives it a cool wireframe look too.
+    renderPass.setPipeline(this.wirePipeline);
+    renderPass.setBindGroup(0, this.earthWireBindGroup);
+    renderPass.setVertexBuffer(0, this.earthVBO);
+    renderPass.setVertexBuffer(1, this.earthVBN);
+    renderPass.setVertexBuffer(2, this.earthVBU);
+    renderPass.setIndexBuffer(this.earthEBO, 'uint16');
+    renderPass.drawIndexed(this.numEarthIndices);
+
+    renderPass.setPipeline(this.solidPipeline);
     renderPass.setBindGroup(0, this.satBindGroup);
     renderPass.setVertexBuffer(0, this.satVBO);
+    renderPass.setVertexBuffer(1, this.satVBN);
+    renderPass.setVertexBuffer(2, this.satVBU);
     renderPass.setIndexBuffer(this.satEBO, 'uint16');
     renderPass.drawIndexed(this.numSatIndices);
 
@@ -265,7 +374,5 @@ export class WebGPUContext implements IRenderContext {
     this.device.queue.submit([commandEncoder.finish()]);
   }
 
-  dispose(): void {
-    this.device?.destroy();
-  }
+  dispose(): void {}
 }

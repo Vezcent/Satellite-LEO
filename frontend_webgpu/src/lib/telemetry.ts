@@ -25,6 +25,9 @@ export interface TelemetryData {
   gsVisible: boolean;
   panelEfficiency: number;
   dragCoeff: number;
+  atmDensity: number;
+  saaFlux10: number;
+  saaFlux30: number;
   isDone: boolean;
   doneReason: number;
   
@@ -119,6 +122,9 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
       
       const panelEfficiency = view.getFloat64(offset, true); offset += 8;
       const dragCoeff = view.getFloat64(offset, true); offset += 8;
+      const atmDensity = view.getFloat64(offset, true); offset += 8;
+      const saaFlux10 = view.getFloat32(offset, true); offset += 4;
+      const saaFlux30 = view.getFloat32(offset, true); offset += 4;
       
       const isDone = view.getUint8(offset++) === 1;
       const doneReason = view.getUint8(offset++);
@@ -136,6 +142,7 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
         seq, simTimeS, altitudeKm, latitudeDeg, longitudeDeg,
         batterySoc, solarPowerW, powerDrawW, inEclipse, inSaa,
         fdirMode, seuActive, gsVisible, panelEfficiency, dragCoeff,
+        atmDensity, saaFlux10, saaFlux30,
         isDone, doneReason, thrustX, thrustY, thrustZ, throttle,
         deepSleep, payloadOn, fdirOverridden
       });

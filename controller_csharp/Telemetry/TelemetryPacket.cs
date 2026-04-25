@@ -46,6 +46,9 @@ public static class TelemetryPacket
         bw.Write(state.GsVisible);
         bw.Write(state.PanelEfficiency);
         bw.Write(state.DragCoeff);
+        bw.Write(state.AtmDensity);
+        bw.Write(state.SaaFlux10Mev);
+        bw.Write(state.SaaFlux30Mev);
         bw.Write(state.IsDone);
         bw.Write(state.DoneReasonVal);
         // Actions taken

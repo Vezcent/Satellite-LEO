@@ -1,5 +1,7 @@
 export function createSphere(radius: number, latSegments: number, lonSegments: number) {
   const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
   const indices: number[] = [];
 
   for (let lat = 0; lat <= latSegments; lat++) {
@@ -17,6 +19,8 @@ export function createSphere(radius: number, latSegments: number, lonSegments: n
       const z = sinPhi * sinTheta;
 
       positions.push(radius * x, radius * y, radius * z);
+      normals.push(x, y, z);
+      uvs.push(lon / lonSegments, lat / latSegments);
     }
   }
 
@@ -32,6 +36,8 @@ export function createSphere(radius: number, latSegments: number, lonSegments: n
 
   return {
     positions: new Float32Array(positions),
+    normals: new Float32Array(normals),
+    uvs: new Float32Array(uvs),
     indices: new Uint16Array(indices)
   };
 }

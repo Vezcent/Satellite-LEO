@@ -5,20 +5,26 @@ import { createSphere } from './geometry';
 
 const vsSource = `#version 300 es
 layout(location = 0) in vec3 aVertexPosition;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUV;
 
 uniform mat4 uModelViewMatrix;
 uniform mat4 uProjectionMatrix;
+uniform mat4 uNormalMatrix;
 uniform vec3 uColor;
 
 out vec3 vColor;
+out vec3 vNormal;
+out vec2 vUV;
+out vec3 vPosition;
 
 void main() {
-  gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aVertexPosition, 1.0);
+  vec4 pos = uModelViewMatrix * vec4(aVertexPosition, 1.0);
+  gl_Position = uProjectionMatrix * pos;
+  vPosition = pos.xyz;
+  vNormal = mat3(uNormalMatrix) * aNormal;
+  vUV = aUV;
   vColor = uColor;
-  
-  // Basic depth fading
-  float depth = (gl_Position.z / gl_Position.w + 1.0) * 0.5;
-  vColor = uColor * (1.2 - depth);
 }
 `;
 
@@ -26,10 +32,42 @@ const fsSource = `#version 300 es
 precision highp float;
 
 in vec3 vColor;
+in vec3 vNormal;
+in vec2 vUV;
+in vec3 vPosition;
+
+uniform vec3 uSunDir;
+uniform sampler2D uHeatmap;
+uniform float uIsEarth; // 1.0 = solid, 0.5 = wireframe, 0.0 = sat
+uniform float uAtmDensity;
+
 out vec4 fragColor;
 
 void main() {
-  fragColor = vec4(vColor, 1.0);
+  if (uIsEarth > 0.8) {
+    vec3 N = normalize(vNormal);
+    vec3 L = normalize(uSunDir);
+    float diff = max(dot(N, L), 0.0);
+    
+    // Earth surface color (Ocean blue)
+    vec3 earthBase = vec3(0.05, 0.15, 0.4);
+    vec3 litColor = earthBase * (0.2 + 0.8 * diff);
+    
+    // Sample heatmap (flip Y because of WebGL coordinate space vs array layout)
+    float heat = texture(uHeatmap, vec2(vUV.x, 1.0 - vUV.y)).r;
+    vec3 heatColor = vec3(1.0, 0.2, 0.0) * heat * 4.0; // Intensified heat
+    
+    // Atmospheric Glow (Fresnel effect)
+    vec3 viewDir = normalize(-vPosition);
+    float fresnel = pow(1.0 - max(dot(N, viewDir), 0.0), 3.0);
+    vec3 atmColor = vec3(0.3, 0.6, 1.0) * fresnel * (0.5 + uAtmDensity * 2.0);
+    
+    fragColor = vec4(litColor + heatColor + atmColor, 1.0);
+  } else if (uIsEarth > 0.2) {
+    fragColor = vec4(vColor, 0.2); // Wireframe
+  } else {
+    fragColor = vec4(vColor, 1.0); // Satellite
+  }
 }
 `;
 
@@ -39,27 +77,32 @@ export class WebGLContext implements IRenderContext {
   
   private vaoEarth!: WebGLVertexArrayObject;
   private numEarthIndices = 0;
-  
   private vaoSat!: WebGLVertexArrayObject;
   private numSatIndices = 0;
 
   private projectionMatrix = mat4.create();
   private viewMatrix = mat4.create();
-
   private satPosition = vec3.fromValues(0, 0, 0);
   private satColor = vec3.fromValues(0.2, 0.5, 1.0);
+  private currentAtmDensity = 0;
 
   // Uniform locations
   private uProj!: WebGLUniformLocation;
   private uModelView!: WebGLUniformLocation;
+  private uNormalMatrix!: WebGLUniformLocation;
   private uColor!: WebGLUniformLocation;
+  private uSunDir!: WebGLUniformLocation;
+  private uHeatmap!: WebGLUniformLocation;
+  private uIsEarth!: WebGLUniformLocation;
+  private uAtmDensity!: WebGLUniformLocation;
+  
+  private heatmapTex!: WebGLTexture;
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
     const gl = canvas.getContext('webgl2', { antialias: true });
     if (!gl) throw new Error('WebGL2 not supported');
     this.gl = gl;
 
-    // Compile Shaders
     const vertShader = this.compileShader(gl.VERTEX_SHADER, vsSource);
     const fragShader = this.compileShader(gl.FRAGMENT_SHADER, fsSource);
     
@@ -73,20 +116,64 @@ export class WebGLContext implements IRenderContext {
 
     this.uProj = gl.getUniformLocation(this.program, 'uProjectionMatrix')!;
     this.uModelView = gl.getUniformLocation(this.program, 'uModelViewMatrix')!;
+    this.uNormalMatrix = gl.getUniformLocation(this.program, 'uNormalMatrix')!;
     this.uColor = gl.getUniformLocation(this.program, 'uColor')!;
+    this.uSunDir = gl.getUniformLocation(this.program, 'uSunDir')!;
+    this.uHeatmap = gl.getUniformLocation(this.program, 'uHeatmap')!;
+    this.uIsEarth = gl.getUniformLocation(this.program, 'uIsEarth')!;
+    this.uAtmDensity = gl.getUniformLocation(this.program, 'uAtmDensity')!;
 
-    // Setup Earth (Wireframe sphere)
     const earthGeo = createSphere(6371, 32, 32);
-    this.vaoEarth = this.createVao(earthGeo.positions, earthGeo.indices);
+    this.vaoEarth = this.createVao(earthGeo.positions, earthGeo.normals, earthGeo.uvs, earthGeo.indices);
     this.numEarthIndices = earthGeo.indices.length;
 
-    // Setup Satellite (Small solid sphere)
-    const satGeo = createSphere(100, 8, 8); // Scaled up slightly for visibility
-    this.vaoSat = this.createVao(satGeo.positions, satGeo.indices);
+    const satGeo = createSphere(100, 8, 8);
+    this.vaoSat = this.createVao(satGeo.positions, satGeo.normals, satGeo.uvs, satGeo.indices);
     this.numSatIndices = satGeo.indices.length;
 
+    this.loadHeatmap();
+
     gl.enable(gl.DEPTH_TEST);
-    gl.enable(gl.CULL_FACE);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+
+  private loadHeatmap(): void {
+    const gl = this.gl;
+    this.heatmapTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.heatmapTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([0]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    fetch('/data/saa_heatmap_600km.csv')
+      .then(r => r.text())
+      .then(text => {
+        const lines = text.trim().split(/\r?\n/).slice(1);
+        const w = 121, h = 90;
+        const data = new Float32Array(w * h);
+        let maxFlux = 0;
+        for (let i = 0; i < lines.length && i < w*h; i++) {
+          const parts = lines[i].split(',');
+          if (parts.length >= 4) {
+            const flux = parseFloat(parts[2]) + parseFloat(parts[3]);
+            data[i] = flux;
+            if (flux > maxFlux) maxFlux = flux;
+          }
+        }
+        const ui8Data = new Uint8Array(w * h);
+        if (maxFlux > 0) {
+          for (let i = 0; i < data.length; i++) {
+            const val = data[i] / maxFlux;
+            ui8Data[i] = Math.floor(Math.pow(val, 0.4) * 255); // gamma correction to make faint areas visible
+          }
+        }
+        gl.bindTexture(gl.TEXTURE_2D, this.heatmapTex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, ui8Data);
+      })
+      .catch(e => console.error("Failed to load heatmap", e));
   }
 
   private compileShader(type: number, source: string): WebGLShader {
@@ -99,7 +186,7 @@ export class WebGLContext implements IRenderContext {
     return shader;
   }
 
-  private createVao(positions: Float32Array, indices: Uint16Array): WebGLVertexArrayObject {
+  private createVao(positions: Float32Array, normals: Float32Array, uvs: Float32Array, indices: Uint16Array): WebGLVertexArrayObject {
     const gl = this.gl;
     const vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
@@ -110,6 +197,18 @@ export class WebGLContext implements IRenderContext {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
 
+    const vboN = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vboN);
+    gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+
+    const vboU = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vboU);
+    gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
+
     const ebo = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
@@ -119,7 +218,6 @@ export class WebGLContext implements IRenderContext {
   }
 
   updateTelemetry(data: TelemetryData): void {
-    // ECI to ECEF roughly (ignoring exact time rotation for visual simplicity)
     const latRad = data.latitudeDeg * Math.PI / 180;
     const lonRad = data.longitudeDeg * Math.PI / 180;
     const r = 6371 + data.altitudeKm;
@@ -128,67 +226,81 @@ export class WebGLContext implements IRenderContext {
     const y = r * Math.cos(latRad) * Math.sin(lonRad);
     const z = r * Math.sin(latRad);
 
-    // Swap Y/Z to match WebGL/WebGPU common coords (Y-up)
     this.satPosition[0] = x;
     this.satPosition[1] = z;
     this.satPosition[2] = -y;
 
-    // Color based on FDIR
-    if (data.fdirMode === 2) { // Safe (Red)
-      vec3.set(this.satColor, 1.0, 0.2, 0.2);
-    } else if (data.fdirMode === 1) { // Degraded (Amber)
-      vec3.set(this.satColor, 1.0, 0.7, 0.1);
-    } else if (data.payloadOn) { // Payload ON (Green)
-      vec3.set(this.satColor, 0.1, 1.0, 0.4);
-    } else { // Nominal (Blue)
-      vec3.set(this.satColor, 0.2, 0.5, 1.0);
-    }
+    if (data.fdirMode === 2) { vec3.set(this.satColor, 1.0, 0.2, 0.2); }
+    else if (data.fdirMode === 1) { vec3.set(this.satColor, 1.0, 0.7, 0.1); }
+    else if (data.payloadOn) { vec3.set(this.satColor, 0.1, 1.0, 0.4); }
+    else { vec3.set(this.satColor, 0.2, 0.5, 1.0); }
+
+    this.currentAtmDensity = data.atmDensity;
   }
 
   render(time: number): void {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-    gl.clearColor(0.02, 0.02, 0.04, 1.0); // Deep space
+    gl.clearColor(0.01, 0.01, 0.02, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     gl.useProgram(this.program);
 
-    // Camera setup
     const aspect = gl.canvas.width / gl.canvas.height;
-    mat4.perspective(this.projectionMatrix, 45 * Math.PI / 180, aspect, 100.0, 30000.0);
+    mat4.perspective(this.projectionMatrix, 45 * Math.PI / 180, aspect, 100.0, 50000.0);
     gl.uniformMatrix4fv(this.uProj, false, this.projectionMatrix);
 
-    // Slowly rotate camera around earth
     const camAngle = time * 0.0001;
-    const camRadius = 15000;
+    const camRadius = 25000;
     mat4.lookAt(this.viewMatrix, 
-      [Math.cos(camAngle) * camRadius, 4000, Math.sin(camAngle) * camRadius],
+      [Math.cos(camAngle) * camRadius, 5000, Math.sin(camAngle) * camRadius],
       [0, 0, 0],
       [0, 1, 0]
     );
 
-    // 1. Draw Earth (Wireframe effect using LINE_STRIP or points, but we'll use triangles with blending or just solid dark)
+    gl.uniform3f(this.uSunDir, 1.0, 0.2, 0.5);
+    const normDensity = Math.min(Math.max((Math.log10(this.currentAtmDensity + 1e-20) + 15) / 5.0, 0.0), 1.0);
+    gl.uniform1f(this.uAtmDensity, normDensity);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.heatmapTex);
+    gl.uniform1i(this.uHeatmap, 0);
+
+    // 1. Earth
     const earthModelView = mat4.clone(this.viewMatrix);
-    // Rotate earth slowly
     mat4.rotateY(earthModelView, earthModelView, time * 0.00005);
     gl.uniformMatrix4fv(this.uModelView, false, earthModelView);
-    gl.uniform3f(this.uColor, 0.15, 0.35, 0.6); // Brighter cyan-blue wireframe
+    
+    const normalMatrix = mat4.create();
+    mat4.invert(normalMatrix, earthModelView);
+    mat4.transpose(normalMatrix, normalMatrix);
+    gl.uniformMatrix4fv(this.uNormalMatrix, false, normalMatrix);
 
     gl.bindVertexArray(this.vaoEarth);
-    // Use line loop for cool wireframe aesthetic
+
+    gl.uniform1f(this.uIsEarth, 1.0);
+    gl.enable(gl.CULL_FACE);
+    gl.drawElements(gl.TRIANGLES, this.numEarthIndices, gl.UNSIGNED_SHORT, 0);
+
+    const wireModelView = mat4.clone(earthModelView);
+    mat4.scale(wireModelView, wireModelView, [1.002, 1.002, 1.002]);
+    gl.uniformMatrix4fv(this.uModelView, false, wireModelView);
+    gl.uniform1f(this.uIsEarth, 0.5);
+    gl.uniform3f(this.uColor, 0.15, 0.35, 0.6);
+    gl.disable(gl.CULL_FACE);
     gl.drawElements(gl.LINES, this.numEarthIndices, gl.UNSIGNED_SHORT, 0);
 
-    // 2. Draw Satellite
+    // 2. Sat
     const satModelView = mat4.clone(this.viewMatrix);
     mat4.translate(satModelView, satModelView, this.satPosition);
     gl.uniformMatrix4fv(this.uModelView, false, satModelView);
+    gl.uniform1f(this.uIsEarth, 0.0);
     gl.uniform3fv(this.uColor, this.satColor);
 
     gl.bindVertexArray(this.vaoSat);
+    gl.enable(gl.CULL_FACE);
     gl.drawElements(gl.TRIANGLES, this.numSatIndices, gl.UNSIGNED_SHORT, 0);
   }
 
-  dispose(): void {
-    // Basic cleanup
-  }
+  dispose(): void {}
 }
