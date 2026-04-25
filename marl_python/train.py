@@ -187,9 +187,13 @@ def train(train_cfg: TrainConfig,
                 else:
                     r = reward_fn.compute(raw_state, action_dict, done, info)
 
-                episode_reward += r
-
-                buffer.push(obs, nav_action, float(bus_action), r, value,
+                # ── Reward Scaling (Numerical Stability) ────────────
+                # Scale by 0.001 so -24M becomes -24k. This prevents
+                # Value Loss from exploding and keeps gradients healthy.
+                r_scaled = r * 0.001
+                episode_reward += r # Track real reward for logs
+                
+                buffer.push(obs, nav_action, float(bus_action), r_scaled, value,
                             nav_lp, bus_lp, done,
                             mission_act=float(mission_action),
                             mission_lp=mission_lp)
