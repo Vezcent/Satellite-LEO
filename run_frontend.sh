@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "======================================================="
-echo "    Starting S-MAS WebGPU Dashboard (React Frontend)"
+echo "    Starting S-MAS WebGPU Dashboard"
 echo "======================================================="
 echo ""
 

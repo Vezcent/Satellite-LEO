@@ -20,10 +20,10 @@ The system utilizes a multi-layered environmental dataset (2000–2020) optimize
 Developed as a high-performance shared library (C++/C) integrated with a C# orchestration layer, transitioning from pure training to mission-grade simulation:
 
 * **Platform Specs (PROBA-1):** 94 kg launch mass, GaAs solar arrays (~90W), and the CHRIS (Compact High Resolution Imaging Spectrometer) optical payload.
-* **Orbital Dynamics:** RK4 integration solver locked at $dt = 5.0s$, modeling aerodynamic drag, orbital decay, and J2 perturbations.
-* **Stochastic Realism & Epistemic Uncertainty:** Includes injected Gaussian noise for sensors (Position, Velocity, Power), Actuator non-ideality ($\pm 5\%$ thruster error), random SEU (Single Event Upset) spikes, Action Execution Latency (simulating command queue delays), and continuous Physics Model Drift (e.g., stochastic drift in the drag coefficient $C_D$ over time to prevent AI overfitting to a perfect simulator).
-* **Degradation Modeling:** Advanced Arrhenius-based chemical degradation for batteries factoring in charge/discharge cycles, alongside hardware degradation from radiation.
+* **Orbital Dynamics:** 3D ECI Numerical Integration (RK4) with J2 perturbations, high-fidelity NRLMSISE-00 atmospheric density modeling, and calibrated multi-year decay curves.
+* **Observation Space (30-Dim):** Fully 3D-aware context including $V_z$ velocity components, historical solar flux lag features ($K_p$, $F_{10.7}$), and geographic radiation boundary detection (SAA).
 * **Failure Contract:** Episodes terminate upon battery depletion ($SoC \le 0\%$), prolonged telemetry loss ($> 72h$), or re-entry ($< 200km$).
+* **Premium Visualization:** A state-of-the-art WebGPU dashboard featuring procedural planet generation, specular ocean glint, atmospheric bloom, and a real-time SAA radiation heatmap.
 
 ## 3. Hybrid Multi-Agent Framework (CTDE + FDIR)
 
@@ -35,7 +35,9 @@ By default, the system implements the **MAPPO (Multi-Agent Proximal Policy Optim
 
 * **Navigation Agent (The Pilot):** Manages continuous 3D $\Delta V$ thruster burns to counteract drag and maintain orbit (subject to actuator noise).
 * **Resource Agent (The Bus Manager):** Controls discrete power states, toggling "Deep Sleep" to protect the bus during solar storms or high-flux SAA crossings.
-* **Mission Agent (The Payload Manager):** By default, executes a data collection mission. It optimizes the CHRIS instrument duty cycle via Binary states (ON/OFF). Crucially, the ON state actively consumes battery power. Users can later override this with custom mission logic.
+* **Mission Agent (The Payload Manager):** Executes a data collection mission by optimizing the CHRIS instrument duty cycle via Binary states (ON/OFF).
+
+The agents utilize **Independent Policy Trunks** to ensure distinct feature extraction for physics-based navigation versus logic-based mission scheduling, preventing task-interference during high-dimensional training.
 
 The RL agents are trained utilizing potential-based reward shaping to maximize longevity survival and successful mission completions.
 
@@ -53,7 +55,7 @@ The development pipeline is segmented into five core stages:
 
 [x] **Task 0:** Virtual Environment & Dependency Management.
 [x] **Task 1 & 2:** Raw Data Acquisition (OMNIWeb/SPENVIS), cleaning, and SAA Heatmap generation.
-[X] **Task 3:** C++ Physics Core, Noise Injection, and Actuator Error modeling.
-[X] **Task 4:** MARL Framework construction (MAPPO) with specialized Reward Shaping.
-[ ] **Task 5:** ONNX integration, C# FDIR Governor, and WebGPU real-time dashboard rendering.
-[ ] **Task 6:** Validation with real PROBA-1 TLE historical data.
+[x] **Task 3:** C++ Physics Core, Noise Injection, and Actuator Error modeling.
+[x] **Task 4:** MARL Framework construction (MAPPO) with specialized Reward Shaping.
+[x] **Task 5:** ONNX integration, C# FDIR Governor, and WebGPU real-time dashboard rendering.
+[x] **Task 6:** Validation with real PROBA-1 TLE historical data.
