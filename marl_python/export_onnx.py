@@ -1,4 +1,4 @@
-﻿"""
+"""
 S-MAS Phase 3 â€” Task 3.4
 ONNX Export Pipeline with Dynamic Axes and FP16.
 
@@ -163,22 +163,46 @@ def export_model(checkpoint_path: str,
         print(f"  âœ“ Exported: {out_path}  ({size_kb:.1f} KB)")
 
     # â”€â”€ Verification with ONNX Runtime â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    print("\n  Verifying ONNX outputs...")
+    print("\n  Verifying ONNX outputs (Numerical Parity)...")
     try:
         import onnxruntime as ort
 
-        test_input = np.random.randn(4, obs_dim).astype(
-            np.float16 if fp16 else np.float32)
+        # Create a single test batch for consistent comparison
+        test_input_np = np.random.randn(1, obs_dim).astype(np.float32)
+        test_input_torch = torch.from_numpy(test_input_np)
 
-        for name in modules:
+        for name, module in modules.items():
             onnx_path = os.path.join(output_dir, f"{name}.onnx")
             session = ort.InferenceSession(onnx_path)
-            ort_out = session.run(None, {"obs_input": test_input})
+            
+            # 1. Run ONNX Inference
+            # Handle FP16 input cast if needed
+            ort_in = test_input_np.astype(np.float16) if fp16 else test_input_np
+            ort_out = session.run(None, {"obs_input": ort_in})
 
-            shapes = [o.shape for o in ort_out]
-            print(f"    {name}: batch=4 â†’ output shapes {shapes} âœ“")
+            # 2. Run PyTorch Inference
+            module.eval()
+            with torch.no_grad():
+                pt_in = test_input_torch.half() if fp16 else test_input_torch
+                pt_out = module(pt_in)
+                
+                # Handle tuple vs single tensor output
+                if isinstance(pt_out, tuple):
+                    pt_out_np = [p.cpu().numpy() for p in pt_out]
+                else:
+                    pt_out_np = [pt_out.cpu().numpy()]
 
-        print("\n  ONNX verification PASSED âœ“")
+            # 3. Compare
+            diffs = []
+            for i in range(len(ort_out)):
+                diff = np.max(np.abs(ort_out[i].astype(np.float32) - pt_out_np[i].astype(np.float32)))
+                diffs.append(diff)
+            
+            max_diff = max(diffs)
+            status = "âœ“" if max_diff < (1e-3 if fp16 else 1e-5) else "Γ£ù"
+            print(f"    {name:13}: Max Diff = {max_diff:.8f} {status}")
+
+        print("\n  ONNX verification COMPLETE")
 
     except ImportError:
         print("    âš  onnxruntime not installed â€” skipping verification.")
