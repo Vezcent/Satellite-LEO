@@ -313,7 +313,7 @@ def train(train_cfg: TrainConfig,
 
 def main():
     parser = argparse.ArgumentParser(description="S-MAS MAPPO Training")
-    parser.add_argument("--total_steps", type=int, default=500_000)
+    parser.add_argument("--total_steps", type=int, default=10_000_000)
     parser.add_argument("--rollout_steps", type=int, default=1176)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--device", type=str, default="cpu")

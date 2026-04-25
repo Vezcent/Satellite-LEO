@@ -158,54 +158,73 @@ class SharedActorCritic(nn.Module):
         super().__init__()
         self.cfg = cfg or MAPPOConfig()
 
-        self.trunk = _make_mlp(obs_dim, self.cfg.hidden_dim,
-                               self.cfg.num_layers, self.cfg.activation)
+        # Shared or Separate Trunks
+        if self.cfg.shared_policy:
+            self.trunk = _make_mlp(obs_dim, self.cfg.hidden_dim, self.cfg.num_layers, self.cfg.activation)
+            self.nav_trunk = self.trunk
+            self.bus_trunk = self.trunk
+            self.mission_trunk = self.trunk
+        else:
+            # Independent Trunks for each agent task
+            self.nav_trunk = _make_mlp(obs_dim, self.cfg.hidden_dim, self.cfg.num_layers, self.cfg.activation)
+            self.bus_trunk = _make_mlp(obs_dim, self.cfg.hidden_dim, self.cfg.num_layers, self.cfg.activation)
+            self.mission_trunk = _make_mlp(obs_dim, self.cfg.hidden_dim, self.cfg.num_layers, self.cfg.activation)
+
         self.nav_head = NavigationHead(self.cfg.hidden_dim, action_dim=4)
         self.bus_head = ResourceHead(self.cfg.hidden_dim)
         self.mission_head = MissionHead(self.cfg.hidden_dim)
         self.value_head = nn.Linear(self.cfg.hidden_dim, 1)
 
-    def get_features(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.trunk(obs)
+    def get_features(self, obs: torch.Tensor, agent_type: str = "shared") -> torch.Tensor:
+        if agent_type == "nav":
+            return self.nav_trunk(obs)
+        elif agent_type == "bus":
+            return self.bus_trunk(obs)
+        elif agent_type == "mission":
+            return self.mission_trunk(obs)
+        else:
+            return self.nav_trunk(obs) # Default
 
     def get_value(self, obs: torch.Tensor) -> torch.Tensor:
-        features = self.get_features(obs)
+        # Critic typically uses the primary (nav) trunk or a mix
+        features = self.get_features(obs, "nav")
         return self.value_head(features).squeeze(-1)
 
     def act(self, obs: torch.Tensor) -> Dict:
-        """
-        Sample actions from all three heads.
-        Returns dict with actions, log_probs, entropy, value.
-        """
-        features = self.get_features(obs)
+        """Sample actions from all three heads."""
+        nav_feat = self.get_features(obs, "nav")
+        bus_feat = self.get_features(obs, "bus")
+        mis_feat = self.get_features(obs, "mission")
 
-        nav_action, nav_lp, nav_ent = self.nav_head.sample(features)
-        bus_action, bus_lp, bus_ent = self.bus_head.sample(features)
-        mission_action, mission_lp, mission_ent = self.mission_head.sample(features)
-        value = self.value_head(features).squeeze(-1)
+        nav_action, nav_lp, nav_ent = self.nav_head.sample(nav_feat)
+        bus_action, bus_lp, bus_ent = self.bus_head.sample(bus_feat)
+        mission_action, mission_lp, mission_ent = self.mission_head.sample(mis_feat)
+        value = self.value_head(nav_feat).squeeze(-1)
 
         return {
-            "nav_action": nav_action,           # (B, 4) tanh-squashed
-            "bus_action": bus_action,            # (B,)   0 or 1
-            "mission_action": mission_action,    # (B,)   0 or 1
-            "nav_log_prob": nav_lp,              # (B,)
-            "bus_log_prob": bus_lp,              # (B,)
-            "mission_log_prob": mission_lp,      # (B,)
-            "entropy": nav_ent + bus_ent + mission_ent,  # (B,)
-            "value": value,                      # (B,)
+            "nav_action": nav_action,
+            "bus_action": bus_action,
+            "mission_action": mission_action,
+            "nav_log_prob": nav_lp,
+            "bus_log_prob": bus_lp,
+            "mission_log_prob": mission_lp,
+            "entropy": nav_ent + bus_ent + mission_ent,
+            "value": value,
         }
 
     def evaluate_actions(self, obs: torch.Tensor,
                          nav_action: torch.Tensor,
                          bus_action: torch.Tensor,
                          mission_action: torch.Tensor) -> Dict:
-        """Re-evaluate log_probs and entropy for saved actions (PPO update)."""
-        features = self.get_features(obs)
+        """Re-evaluate log_probs and entropy for saved actions."""
+        nav_feat = self.get_features(obs, "nav")
+        bus_feat = self.get_features(obs, "bus")
+        mis_feat = self.get_features(obs, "mission")
 
-        nav_lp, nav_ent = self.nav_head.evaluate(features, nav_action)
-        bus_lp, bus_ent = self.bus_head.evaluate(features, bus_action)
-        mission_lp, mission_ent = self.mission_head.evaluate(features, mission_action)
-        value = self.value_head(features).squeeze(-1)
+        nav_lp, nav_ent = self.nav_head.evaluate(nav_feat, nav_action)
+        bus_lp, bus_ent = self.bus_head.evaluate(bus_feat, bus_action)
+        mission_lp, mission_ent = self.mission_head.evaluate(mis_feat, mission_action)
+        value = self.value_head(nav_feat).squeeze(-1)
 
         return {
             "nav_log_prob": nav_lp,
