@@ -66,7 +66,7 @@ class SurvivalReward:
         throttle = float(np.clip(nav[3], 0.0, 1.0))
         thrust_mag = np.sqrt(nav[0]**2 + nav[1]**2 + nav[2]**2)
         # Normalised ΔV proxy: direction magnitude × throttle
-        dv_proxy = min(thrust_mag, 1.0) * throttle
+        dv_proxy = thrust_mag * throttle
         reward -= self.cfg.w_fuel * dv_proxy
 
         # ── 3. Depth of Discharge penalty ──────────────────────────
@@ -168,11 +168,14 @@ class MissionReward:
         r_survival = self.survival.compute(state, action, done, info)
 
         # ── Mission terms ──────────────────────────────────────────
-        payload_on = float(action.get("mission", 0))
+        # Use actual payload status (post-override) from info dict
+        actual_payload = float(info.get("payload_on", action.get("mission", 0)))
+        requested_payload = float(action.get("mission", 0))
+        
         r_mission = 0.0
         valid_target = self._is_valid_target(state)
 
-        if payload_on > 0.5:
+        if actual_payload > 0.5:
             if state.in_saa:
                 # CRITICAL: Payload ON inside SAA → massive penalty
                 r_mission -= self.cfg.w_saa_penalty
@@ -184,10 +187,16 @@ class MissionReward:
                 r_mission -= self.cfg.w_idle_power
         else:
             # Payload is OFF. Check for "Sloth" (Sleeping when should be imaging)
+            # Only apply if the Agent INTENTIONALLY slept, not if it was overridden
             deep_sleep = float(action.get("bus", 0)) > 0.5
-            if deep_sleep and valid_target and state.battery_soc > 0.9:
+            if deep_sleep and valid_target and state.battery_soc > 0.9 and not info.get("meta_override", False):
                 # Sat is over target with >90% battery but choosing to sleep → Sloth Penalty
                 r_mission -= self.cfg.w_sloth_penalty
+
+        # Coordination Penalty: If agents disagreed and the hardcode had to step in
+        if info.get("meta_override", False):
+            r_mission -= 50.0  # Small penalty for lack of agent coordination
+
 
         # ── Compose ────────────────────────────────────────────────
         total = r_survival + r_mission
@@ -195,9 +204,9 @@ class MissionReward:
         mission_info = {
             "r_survival": r_survival,
             "r_mission": r_mission,
-            "payload_on": payload_on > 0.5,
+            "payload_on": actual_payload > 0.5,
             "valid_target": valid_target,
-            "saa_violation": payload_on > 0.5 and bool(state.in_saa),
+            "saa_violation": actual_payload > 0.5 and bool(state.in_saa),
         }
 
         return total, mission_info

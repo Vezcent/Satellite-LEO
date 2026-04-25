@@ -68,15 +68,20 @@ class NavigationHead(nn.Module):
         action = torch.tanh(raw_action)
         # Correction for tanh squashing in log_prob
         log_prob -= torch.log(1.0 - action.pow(2) + 1e-6).sum(-1)
-        return action, log_prob, entropy
+        return action, raw_action, log_prob, entropy
 
-    def evaluate(self, features: torch.Tensor, action: torch.Tensor):
+    def evaluate(self, features: torch.Tensor, raw_action: torch.Tensor):
         mu, std = self.forward(features)
         dist = Normal(mu, std)
-        # Unsquash for log_prob computation
-        raw_action = torch.atanh(action.clamp(-0.999, 0.999))
+        
+        # 1. Base log_prob from the Normal distribution
         log_prob = dist.log_prob(raw_action).sum(-1)
+        
+        # 2. Tanh correction: log(1 - tanh(x)^2)
+        # Using 2 * (log(2) - x - softplus(-2x)) is more stable than log(1 - tanh(x)^2)
+        action = torch.tanh(raw_action)
         log_prob -= torch.log(1.0 - action.pow(2) + 1e-6).sum(-1)
+        
         entropy = dist.entropy().sum(-1)
         return log_prob, entropy
 
@@ -196,13 +201,14 @@ class SharedActorCritic(nn.Module):
         bus_feat = self.get_features(obs, "bus")
         mis_feat = self.get_features(obs, "mission")
 
-        nav_action, nav_lp, nav_ent = self.nav_head.sample(nav_feat)
+        nav_action, raw_nav, nav_lp, nav_ent = self.nav_head.sample(nav_feat)
         bus_action, bus_lp, bus_ent = self.bus_head.sample(bus_feat)
         mission_action, mission_lp, mission_ent = self.mission_head.sample(mis_feat)
         value = self.value_head(nav_feat).squeeze(-1)
 
         return {
-            "nav_action": nav_action,
+            "nav_action": nav_action,           # (B, 4) squashed
+            "raw_nav": raw_nav,                 # (B, 4) UNSQUASHED
             "bus_action": bus_action,
             "mission_action": mission_action,
             "nav_log_prob": nav_lp,
@@ -366,11 +372,10 @@ def ppo_update(model: SharedActorCritic,
             value   = out["value"]
             entropy = out["entropy"]
 
-            # Combined log-prob ratio (3-agent)
-            ratio_nav = torch.exp(new_nav - old_nav)
-            ratio_bus = torch.exp(new_bus - old_bus)
-            ratio_mis = torch.exp(new_mis - old_mis)
-            ratio = ratio_nav * ratio_bus * ratio_mis
+            # Combined log-prob ratio (3-agent) - Log-space summation for stability
+            new_log_prob_sum = new_nav + new_bus + new_mis
+            old_log_prob_sum = old_nav + old_bus + old_mis
+            ratio = torch.exp(new_log_prob_sum - old_log_prob_sum)
 
             # Clipped surrogate
             surr1 = ratio * adv

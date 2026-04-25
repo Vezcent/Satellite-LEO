@@ -221,8 +221,11 @@ class SatelliteEnv:
         # ── Meta-Coordination (Task 3.3) ───────────────────────────
         # Software-Defined Resiliency: override payload to OFF
         # when the Resource Agent has triggered deep_sleep.
+        requested_mission = int(action.get("mission", 0))
         if bus == 1:
             mission = 0
+        
+        meta_override = (requested_mission == 1 and mission == 0)
 
         self._action.version    = 1
         self._action.thrust_x   = float(nav[0])
