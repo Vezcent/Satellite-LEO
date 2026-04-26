@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SmasController")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+393afe1225db4d37ea56a9df62198c023cbeca85")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+db18f258181969ad973852cacd917dcea670e216")]
 [assembly: System.Reflection.AssemblyProductAttribute("SmasController")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SmasController")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
