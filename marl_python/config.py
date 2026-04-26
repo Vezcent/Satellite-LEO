@@ -63,11 +63,11 @@ class ActionConfig:
 class RewardConfig:
     """Explicit reward weights (from pipeline doc §3.2.2)."""
     w_alive: float = 1.0               # +1 per step survived
-    w_fuel:  float = 1.0               # penalty per unit ΔV used (reduced to encourage thrust)
-    w_dod:   float = 5.0               # penalty for Depth of Discharge (increased to teach battery care)
+    w_fuel:  float = 20.0              # HEAVILY increased to force the agent to learn how to coast
+    w_dod:   float = 5.0               # penalty for Depth of Discharge
     w_fdir:  float = 100.0             # penalty when FDIR intervenes
     w_fatal: float = 5000.0            # massive penalty on terminal failure
-    w_alt:   float = 50.0              # penalty for altitude deviation (reduced to allow some risk)
+    w_alt:   float = 5.0               # REDUCED from 50.0 to stop panic-thrusting and allow gentle corrections
     target_alt_km: float = 600.0       # nominal target altitude
     alt_deadband_km: float = 5.0       # tolerance band (no penalty within ±5km)
 
@@ -75,7 +75,7 @@ class RewardConfig:
 @dataclass
 class MissionRewardConfig:
     """Phase 3: Mission-layer reward weights (from pipeline doc §3.3.2)."""
-    w_valid_target: float = 500.0      # +500 for valid target imaged (10x boost to motivate AI)
+    w_valid_target: float = 300.0      # +500 for valid target imaged (10x boost to motivate AI)
     w_saa_penalty: float = 1000.0      # -1000 for payload ON inside SAA (more dangerous)
     w_idle_power: float = 10.0         # -10 for payload ON when not over target
     w_sloth_penalty: float = 200.0     # -200 if DeepSleep is ON while battery is high (>90%) and over target

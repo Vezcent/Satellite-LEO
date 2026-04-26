@@ -35,16 +35,18 @@ from mappo import SharedActorCritic
 
 class NavExportModule(nn.Module):
     """Wraps trunk + NavigationHead for ONNX export.
-    Output: (mu, std) â€” 4-dim each."""
+    Output: action[4] (tanh-squashed mu) — deterministic policy."""
     def __init__(self, model: SharedActorCritic):
         super().__init__()
-        self.trunk = model.trunk
+        self.trunk = model.nav_trunk
         self.nav_head = model.nav_head
 
     def forward(self, obs: torch.Tensor):
         features = self.trunk(obs)
         mu, std = self.nav_head(features)
-        return mu, std
+        # Apply tanh to match training-time squashing
+        action = torch.tanh(mu)
+        return action
 
 
 class BusExportModule(nn.Module):
@@ -52,7 +54,7 @@ class BusExportModule(nn.Module):
     Output: logit (1-dim per batch)."""
     def __init__(self, model: SharedActorCritic):
         super().__init__()
-        self.trunk = model.trunk
+        self.trunk = model.bus_trunk
         self.bus_head = model.bus_head
 
     def forward(self, obs: torch.Tensor):
@@ -66,7 +68,7 @@ class MissionExportModule(nn.Module):
     Output: logit (1-dim per batch)."""
     def __init__(self, model: SharedActorCritic):
         super().__init__()
-        self.trunk = model.trunk
+        self.trunk = model.mission_trunk
         self.mission_head = model.mission_head
 
     def forward(self, obs: torch.Tensor):
@@ -125,7 +127,7 @@ def export_model(checkpoint_path: str,
     }
 
     output_names_map = {
-        "smas_nav":     ["mu", "std"],
+        "smas_nav":     ["action"],
         "smas_bus":     ["logit"],
         "smas_mission": ["logit"],
     }
@@ -217,17 +219,60 @@ def export_model(checkpoint_path: str,
 #  CLI entry point
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+def _find_latest_checkpoint(ckpt_dir: str = "checkpoints") -> str:
+    """Find the latest checkpoint from the FIXED training pipeline.
+    Fixed-pipeline checkpoints are ~92KB (independent trunks).
+    Old broken checkpoints are ~272KB (shared trunk) — skip those.
+    """
+    import glob
+    candidates = glob.glob(os.path.join(ckpt_dir, "mappo_phase3_*.pt"))
+    if not candidates:
+        raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
+    
+    # Filter to only new-pipeline checkpoints (< 150KB)
+    new_pipeline = [f for f in candidates if os.path.getsize(f) < 150_000]
+    if not new_pipeline:
+        raise FileNotFoundError(
+            "No checkpoints from the fixed training pipeline found.\n"
+            "Old checkpoints (~272KB) use the broken shared-trunk architecture.\n"
+            "Run training first: python train.py --phase 3 --device cpu"
+        )
+    
+    # Sort by modification time, newest first
+    new_pipeline.sort(key=os.path.getmtime, reverse=True)
+    return new_pipeline[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description="S-MAS ONNX Export")
-    parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to .pt checkpoint file")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Path to .pt checkpoint file (auto-detects latest if omitted)")
     parser.add_argument("--output_dir", type=str, default="onnx_export",
                         help="Directory for ONNX files")
     parser.add_argument("--fp16", action="store_true",
                         help="Export in half precision (FP16)")
+    parser.add_argument("--deploy", action="store_true",
+                        help="Copy exported models to controller_csharp/models/")
     args = parser.parse_args()
 
+    # Auto-detect latest checkpoint if not specified
+    if args.checkpoint is None:
+        args.checkpoint = _find_latest_checkpoint()
+        print(f"  Auto-detected latest checkpoint: {args.checkpoint}")
+
     export_model(args.checkpoint, args.output_dir, args.fp16)
+
+    # Deploy to C# controller if requested
+    if args.deploy:
+        import shutil
+        deploy_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "controller_csharp", "models")
+        os.makedirs(deploy_dir, exist_ok=True)
+        for f in ["smas_nav.onnx", "smas_bus.onnx", "smas_mission.onnx"]:
+            src = os.path.join(args.output_dir, f)
+            dst = os.path.join(deploy_dir, f)
+            shutil.copy2(src, dst)
+        print(f"\n  Deployed to: {deploy_dir}")
 
 
 if __name__ == "__main__":

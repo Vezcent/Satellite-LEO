@@ -92,17 +92,18 @@ public sealed class InferenceEngine : IDisposable
         };
 
         // ── Navigation Head ──────────────────────────────────────
-        // Output: mu[4], std[4] — we use mu (deterministic at inference)
+        // Output: action[4] — tanh-squashed, deterministic policy
         using var navResults = _navSession.Run(inputs);
-        var muTensor = navResults.First().AsTensor<float>();
+        var actionTensor = navResults.First().AsTensor<float>();
 
-        // Clamp thrust to [-1, 1] and throttle to [0, 1]
+        // action[0..2] are thrust in [-1, 1] (already tanh-squashed)
+        // action[3] is throttle: tanh gives [-1,1], map to [0,1]
         var nav = new NavigationAction
         {
-            ThrustX  = Math.Clamp(muTensor[0, 0], -1f, 1f),
-            ThrustY  = Math.Clamp(muTensor[0, 1], -1f, 1f),
-            ThrustZ  = Math.Clamp(muTensor[0, 2], -1f, 1f),
-            Throttle = Math.Clamp(muTensor[0, 3],  0f, 1f),
+            ThrustX  = actionTensor[0, 0],
+            ThrustY  = actionTensor[0, 1],
+            ThrustZ  = actionTensor[0, 2],
+            Throttle = (actionTensor[0, 3] + 1f) / 2f,  // [-1,1] → [0,1]
         };
 
         // ── Resource Head ────────────────────────────────────────

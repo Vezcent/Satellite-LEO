@@ -24,7 +24,8 @@ def train(train_cfg: TrainConfig,
           mission_rew_cfg: MissionRewardConfig,
           mappo_cfg: MAPPOConfig,
           device: str = "cpu",
-          phase: int = 1):
+          phase: int = 1,
+          resume_ckpt: str = None):
     
     # ── Setup ──────────────────────────────────────────────────
     print("\n" + "=" * 70)
@@ -44,9 +45,6 @@ def train(train_cfg: TrainConfig,
     obs_list = [obs_builder.build(e.reset(randomize=True)) for e in envs]
     done_list = [False] * env_cfg.num_envs
     
-    total_steps = 0
-    episode_count = 0
-    
     # Brain
     model = SharedActorCritic(obs_cfg.obs_dim, mappo_cfg).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=mappo_cfg.lr)
@@ -54,6 +52,19 @@ def train(train_cfg: TrainConfig,
     # Buffers: One for each environment to prevent GAE timeline mixing
     buffers = [RolloutBuffer(mappo_cfg.rollout_steps, obs_cfg.obs_dim, 4) 
                for _ in range(env_cfg.num_envs)]
+
+    total_steps = 0
+    episode_count = 0
+
+    if resume_ckpt and os.path.exists(resume_ckpt):
+        print(f"  Resuming from: {resume_ckpt}")
+        ckpt = torch.load(resume_ckpt, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state"])
+        if "optimizer_state" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+        episode_count = ckpt.get("episode", 0)
+        total_steps = ckpt.get("total_steps", episode_count * 17280)
+        print(f"  Loaded episode {episode_count}, total_steps {total_steps}")
 
     # ── Main training loop ─────────────────────────────────────────
     while total_steps < train_cfg.total_timesteps:
@@ -183,8 +194,10 @@ def train(train_cfg: TrainConfig,
             path = f"checkpoints/mappo_phase{phase}_ep{episode_count}.pt"
             torch.save({
                 "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
                 "best_reward": episode_reward,
                 "episode": episode_count,
+                "total_steps": total_steps,
                 "phase": phase
             }, path)
             print(f"    â†’ Checkpoint saved: {path}")
@@ -198,11 +211,12 @@ def train(train_cfg: TrainConfig,
 
 def main():
     parser = argparse.ArgumentParser(description="S-MAS MAPPO Training")
-    parser.add_argument("--total_steps", type=int, default=10_000_000)
+    parser.add_argument("--total_steps", type=int, default=50_000_000)
     parser.add_argument("--rollout_steps", type=int, default=1176)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--phase", type=int, default=1)
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     args = parser.parse_args()
 
     # Normalize device name ("gpu" → "cuda")
@@ -217,7 +231,7 @@ def main():
     mission_rew_cfg = MissionRewardConfig()
     mappo_cfg = MAPPOConfig(rollout_steps=args.rollout_steps, lr=args.lr)
 
-    train(train_cfg, env_cfg, obs_cfg, reward_cfg, mission_rew_cfg, mappo_cfg, args.device, args.phase)
+    train(train_cfg, env_cfg, obs_cfg, reward_cfg, mission_rew_cfg, mappo_cfg, args.device, args.phase, args.resume)
 
 if __name__ == "__main__":
     main()
