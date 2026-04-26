@@ -1,45 +1,42 @@
-# S-MAS Optimization Feedback — April 25, 2026
+fix reward
 
-## Critical Bug Fixes
-1. **3D Velocity Context (Incomplete Navigation)**
-   - **Change**: Added `vz_norm` (normalized Z-velocity) to the observation vector. 
-   - **Meaning**: Previously, the satellite only "saw" its movement in the X and Y planes. Because the orbit is polar-inclined (97.7°), it was missing roughly 1/3 of its orbital context. Adding Z-velocity allows the AI to correctly orient its prograde/retrograde thrust in 3D ECI space.
-   - **Impact**: Dramatically improves thrust efficiency and prevents "drifting" into re-entry.
+this is feedback, no need to do exactly the same code, make it better if you want.
 
-2. **Solar Cycle Generalization (Training Robustness)**
-   - **Change**: Implemented `smas_set_time` in the C++ engine and added `randomize=True` to the Python `reset()` call.
-   - **Meaning**: The AI now trains against random dates between 2000 and 2017. 
-   - **Impact**: The satellite is no longer "surprised" by sudden high-drag periods (Solar Maximum) that it hadn't seen during static-date training.
 
-## Reward Shaping Updates
-1. **Aggressive Altitude Maintenance**
-   - `w_alt`: Increased from 10.0 to 100.0. (Stronger correction signal).
-   - `alt_deadband_km`: Reduced from 10.0km to 2.0km. (Strict 600km station-keeping).
-2. **Survival Prioritization**
-   - `w_fuel`: Reduced from 5.0 to 1.0. (Telling the AI that using fuel for survival is "cheaper" than allowing altitude to drop).
-   - `w_fatal`: Increased from 1,000 to 5,000. (Extreme discouragement of re-entry).
+1. "Spam Clicker" vulnerability (Farm points 50 per step)
+On line 123:
 
-## Technical Requirements
-- **Observation Space**: Increased from 29 to 30 dimensions.
-- **Engine Rebuild**: C++ DLL must be re-compiled to support the `smas_set_time` export.
-- **Retraining**: Models must be retrained using the new 30-dim observation builder.
+Python
+elif valid_target:
+    # Valid imaging opportunity → bonus
+    r_mission += self.cfg.w_valid_target
+Problem: If w_valid_target is 50, and the satellite passes over the target area in 20 steps, the Agent will keep the payload ON and receive 50 * 20 = 10,00 points for one pass. It ruins the entire scale of Survival.
 
-## Premium Visuals & Dashboard (Phase 4)
-1. **Dynamic Lighting & Glint**
-   - **Update**: Added Blinn-Phong specular glint (ocean reflection) and Rayleigh scattering (atmospheric bloom).
-   - **Impact**: Sunlight now feels directional and "clear." The Earth looks like a physical object rather than a flat sphere.
-2. **Sun Starburst & Cosmos**
-   - **Update**: Implemented procedural Sun rays and a static, sparse starfield.
-   - **Impact**: Fixes the "TV Static" look of the background and adds cinematic "light rays" as requested.
-3. **Procedural Continents**
-   - **Update**: Added noise-based landmass generation locked to the Earth's local normal.
-   - **Impact**: The Earth now rotates realistically with visible landmasses and the SAA heatmap in sync.
+How to Fix: You need to turn MissionReward into a stateful class to track whether the current goal has been scored or not.
 
-## Mission Agent Optimization (Phase 5)
-1. **The "Lazy AI" / Sloth Fix**
-   - **Change**: Increased `w_valid_target` (50 -> 500) and added `w_sloth_penalty` (-200).
-   - **Meaning**: The AI was choosing to stay in Deep Sleep forever to avoid power loss. We have now made "Imaging" more valuable than "Sleeping."
-   - **Impact**: Satellite will now wake up and prioritize the mission over pure survival when the battery is healthy (>90%).
-2. **Offline Analysis Tools**
-   - **Feature**: Created `visualize.py`.
-   - **Benefit**: Allows you to generate high-resolution PNG plots and mission summary CSVs (Lifetime, Fuel, Payload duty cycle) after each run.
+Add an instance variable to __init__:
+
+Python
+def __init__(self, ...):
+    ...
+    self.has_imaged_current_target = False
+Modify the point level logic:
+
+Python
+if actual_payload > 0.5:
+    if state.in_saa:
+        r_mission -= self.cfg.w_saa_penalty
+    elif valid_target:
+        if not self.has_imaged_current_target:
+            r_mission += self.cfg.w_valid_target
+            self.has_imaged_current_target = True # Mark imaged as completed
+        else:
+            # A very small reward to encourage keeping the payload ON until the end of the zone 
+            # (or equal to 0 depending on your design)
+            r_mission += 5.0 
+    else:
+        r_mission -= self.cfg.w_idle_power
+
+# Extremely important: Reset the flag when flying out of the target area
+if not valid_target:
+    self.has_imaged_current_target = False

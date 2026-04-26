@@ -127,6 +127,7 @@ class MissionReward:
                  mission_cfg: Optional[MissionRewardConfig] = None):
         self.survival = SurvivalReward(survival_cfg)
         self.cfg = mission_cfg or MissionRewardConfig()
+        self._has_imaged_current_target = False  # Fix #1: prevent reward farming
 
     def _is_valid_target(self, state: StatePacket) -> bool:
         """Check if current position is a valid imaging target."""
@@ -180,8 +181,17 @@ class MissionReward:
                 # CRITICAL: Payload ON inside SAA → massive penalty
                 r_mission -= self.cfg.w_saa_penalty
             elif valid_target:
-                # Valid imaging opportunity → bonus
-                r_mission += self.cfg.w_valid_target
+                # Fix #2: Battery safety floor — penalise greedy imaging at low SoC
+                if state.battery_soc < 0.3:
+                    # Low battery but still trying to image → punish greed
+                    r_mission -= self.survival.cfg.w_dod * 2
+                elif not self._has_imaged_current_target:
+                    # Fix #1: First step over this target → grant full bonus
+                    r_mission += self.cfg.w_valid_target
+                    self._has_imaged_current_target = True
+                else:
+                    # Fix #1: Already imaged this pass → tiny maintenance reward
+                    r_mission += 2.0
             else:
                 # Payload ON but not over target → wasted power
                 r_mission -= self.cfg.w_idle_power
@@ -192,6 +202,10 @@ class MissionReward:
             if deep_sleep and valid_target and state.battery_soc > 0.9 and not info.get("meta_override", False):
                 # Sat is over target with >90% battery but choosing to sleep → Sloth Penalty
                 r_mission -= self.cfg.w_sloth_penalty
+
+        # Fix #1: Reset the flag when flying out of the target area
+        if not valid_target:
+            self._has_imaged_current_target = False
 
         # Coordination Penalty: If agents disagreed and the hardcode had to step in
         if info.get("meta_override", False):
