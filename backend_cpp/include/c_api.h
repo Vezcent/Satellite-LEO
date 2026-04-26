@@ -34,6 +34,9 @@ SMAS_API void smas_reset(void* engine);
 // Jump to a specific simulation time (seconds since TLE epoch).
 SMAS_API void smas_set_time(void* engine, double time_s);
 
+// Force set degradation (capacity in Joules, panel efficiency [0,1])
+SMAS_API void smas_set_degradation(void* engine, double capacity_j, double panel_eff);
+
 // Advance one time step. Fills `out_state`.
 SMAS_API void smas_step(void* engine,
                         const smas::ActionPacket* action,

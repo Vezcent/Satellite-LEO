@@ -140,6 +140,9 @@ class SatelliteEnv:
         # smas_set_time(engine, time_s) -> void
         self._lib.smas_set_time.argtypes = [ct.c_void_p, ct.c_double]
         self._lib.smas_set_time.restype  = None
+        # smas_set_degradation(engine, capacity_j, panel_eff) -> void
+        self._lib.smas_set_degradation.argtypes = [ct.c_void_p, ct.c_double, ct.c_double]
+        self._lib.smas_set_degradation.restype  = None
         # smas_destroy(engine) -> void
         self._lib.smas_destroy.argtypes = [ct.c_void_p]
         self._lib.smas_destroy.restype  = None
@@ -176,12 +179,17 @@ class SatelliteEnv:
         
         if randomize:
             # Sample random start time from the 17-year space weather dataset
-            # (2000 to 2017)
-            # Max time ~ 17 years * 365 days * 86400s ≈ 536,112,000s
-            # We subtract 30 days to ensure we don't run off the end
             max_start = (17 * 365 - 30) * 86400.0
             start_time = np.random.uniform(0, max_start)
             self._lib.smas_set_time(self._handle, ct.c_double(start_time))
+            
+            # ── Degradation Training ──
+            # Age the satellite between 0 and 10 years
+            # Capacity degrades from 360,000 to ~150,000 J
+            # Panel efficiency degrades from 1.0 to ~0.60
+            capacity_j = np.random.uniform(150000.0, 360000.0)
+            panel_eff = np.random.uniform(0.60, 1.0)
+            self._lib.smas_set_degradation(self._handle, ct.c_double(capacity_j), ct.c_double(panel_eff))
             
         self._step_count = 0
         self._prev_fdir = 0

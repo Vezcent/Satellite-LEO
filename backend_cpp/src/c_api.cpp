@@ -32,6 +32,11 @@ SMAS_API void smas_set_time(void* engine, double time_s) {
     eng->set_time(time_s);
 }
 
+SMAS_API void smas_set_degradation(void* engine, double capacity_j, double panel_eff) {
+    auto* eng = static_cast<smas::SimulationEngine*>(engine);
+    eng->set_degradation(capacity_j, panel_eff);
+}
+
 SMAS_API void smas_step(void* engine,
                         const smas::ActionPacket* action,
                         smas::StatePacket* out_state) {

@@ -59,3 +59,4 @@ The development pipeline is segmented into five core stages:
 [x] **Task 4:** MARL Framework construction (MAPPO) with specialized Reward Shaping.
 [x] **Task 5:** ONNX integration, C# FDIR Governor, and WebGPU real-time dashboard rendering.
 [x] **Task 6:** Validation with real PROBA-1 TLE historical data.
+[x] **Task 7:** Degradation Training simulating multi-year battery and solar panel radiation damage for 10+ year survival capacity.

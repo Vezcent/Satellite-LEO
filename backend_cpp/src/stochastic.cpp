@@ -141,4 +141,8 @@ void ModelDrift::step() {
     panel_eff_ = smas::compat::clamp(panel_eff_, 0.3, 1.0);
 }
 
+void ModelDrift::set_panel_efficiency(double eff) {
+    panel_eff_ = smas::compat::clamp(eff, 0.3, 1.0);
+}
+
 } // namespace smas

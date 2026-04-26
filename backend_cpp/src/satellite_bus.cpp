@@ -68,6 +68,13 @@ void SatelliteBus::apply_cycle_degradation() {
     capacity_j_ = std::max(capacity_j_, 0.0);
 }
 
+void SatelliteBus::set_degradation(double capacity_j) {
+    capacity_j_ = smas::compat::clamp(capacity_j, 10000.0, constants::SAT_BATTERY_CAP_J);
+    // Adjust SoC to preserve current energy if possible
+    double current_energy = soc_ * capacity_j_;
+    soc_ = smas::compat::clamp(current_energy / capacity_j_, 0.0, 1.0);
+}
+
 DoneReason SatelliteBus::check_failure(double time_since_contact,
                                         double alt_km,
                                         bool   seu_fatal) const {

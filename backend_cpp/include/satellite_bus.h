@@ -35,6 +35,8 @@ public:
     //   Called once each time SoC crosses a threshold.
     void apply_cycle_degradation();
 
+    void set_degradation(double capacity_j);
+
     // ── Failure Contract (Done) ───────────────────────────────────
     //   time_since_contact : seconds without ground station contact
     //   altitude_km        : current altitude

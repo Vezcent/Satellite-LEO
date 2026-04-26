@@ -77,6 +77,11 @@ void SimulationEngine::set_time(double time_s) {
     update_time();
 }
 
+void SimulationEngine::set_degradation(double capacity_j, double panel_eff) {
+    bus_.set_degradation(capacity_j);
+    drift_.set_panel_efficiency(panel_eff);
+}
+
 void SimulationEngine::update_time() {
     sim_time_struct_.total_seconds = orbit_.time;
 

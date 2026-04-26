@@ -83,6 +83,8 @@ public:
     // Advance one step: apply random walk to Cd and panel efficiency.
     void step();
 
+    void set_panel_efficiency(double eff);
+
     double cd()               const { return cd_; }
     double panel_efficiency() const { return panel_eff_; }
 
