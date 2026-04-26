@@ -107,6 +107,10 @@ class SatelliteEnv:
         self._step_count = 0
         self._prev_fdir = 0
         self._state = StatePacket()
+        # Progressive degradation tracking
+        self._current_panel_eff = 1.0
+        self._current_capacity_j = 360000.0
+        self._progressive_degradation = False
         self._action = ActionPacket()
 
     # ── DLL management ─────────────────────────────────────────────
@@ -184,12 +188,20 @@ class SatelliteEnv:
             self._lib.smas_set_time(self._handle, ct.c_double(start_time))
             
             # ── Degradation Training ──
-            # Age the satellite between 0 and 10 years
-            # Capacity degrades from 360,000 to ~150,000 J
-            # Panel efficiency degrades from 1.0 to ~0.60
-            capacity_j = np.random.uniform(150000.0, 360000.0)
-            panel_eff = np.random.uniform(0.60, 1.0)
+            # Start at a random "mission age" (healthier range since we
+            # progressively degrade during the episode)
+            capacity_j = np.random.uniform(200000.0, 360000.0)
+            panel_eff = np.random.uniform(0.70, 1.0)
             self._lib.smas_set_degradation(self._handle, ct.c_double(capacity_j), ct.c_double(panel_eff))
+            
+            # Track for progressive degradation during the episode
+            self._current_panel_eff = panel_eff
+            self._current_capacity_j = capacity_j
+            self._progressive_degradation = True
+        else:
+            self._current_panel_eff = 1.0
+            self._current_capacity_j = 360000.0
+            self._progressive_degradation = False
             
         self._step_count = 0
         self._prev_fdir = 0
@@ -249,6 +261,23 @@ class SatelliteEnv:
             ct.byref(self._state),
         )
         self._step_count += 1
+
+        # ── Progressive degradation: worsen hardware every orbit ──
+        if (self._progressive_degradation and
+                self._step_count % self.cfg.orbit_steps == 0):
+            self._current_panel_eff = max(
+                self.cfg.min_panel_eff,
+                self._current_panel_eff - self.cfg.panel_decay_per_orbit
+            )
+            self._current_capacity_j = max(
+                self.cfg.min_capacity_j,
+                self._current_capacity_j - self.cfg.capacity_decay_per_orbit
+            )
+            self._lib.smas_set_degradation(
+                self._handle,
+                ct.c_double(self._current_capacity_j),
+                ct.c_double(self._current_panel_eff),
+            )
 
         done = bool(self._state.is_done) or \
                self._step_count >= self.cfg.max_steps_per_episode

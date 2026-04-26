@@ -63,6 +63,7 @@ def train(train_cfg: TrainConfig,
         if "optimizer_state" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer_state"])
         episode_count = ckpt.get("episode", 0)
+        # Old checkpoints didn't have total_steps and were 17,280 steps/ep
         total_steps = ckpt.get("total_steps", episode_count * 17280)
         print(f"  Loaded episode {episode_count}, total_steps {total_steps}")
 
@@ -211,7 +212,7 @@ def train(train_cfg: TrainConfig,
 
 def main():
     parser = argparse.ArgumentParser(description="S-MAS MAPPO Training")
-    parser.add_argument("--total_steps", type=int, default=50_000_000)
+    parser.add_argument("--total_steps", type=int, default=40_000_000)
     parser.add_argument("--rollout_steps", type=int, default=1176)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--device", type=str, default="cpu")

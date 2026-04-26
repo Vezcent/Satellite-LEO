@@ -20,9 +20,17 @@ class EnvConfig:
     dll_path: str = str(PROJECT_ROOT / "backend_cpp" / "build" / "smas_engine.dll")
     seed: int = 42
     dt: float = 5.0                     # immutable physics step (seconds)
-    max_steps_per_episode: int = 17_280  # ~1 day  (86 400 / 5)
+    max_steps_per_episode: int = 120_960  # ~1 week (7 days × 86400 / 5)
     num_envs: int = 4                   # parallel environments for rollout
     density_multiplier: float = 0.01    # calibrated for multi-year realism (PROBA-1: 24yr at 600km)
+    # ── Progressive Degradation (within each episode) ──
+    # Compresses ~10 years of aging into 1-week episode so the agent
+    # learns to adapt its behaviour as hardware degrades mid-flight.
+    orbit_steps: int = 1_152                  # steps per orbit (~96 min / 5s)
+    panel_decay_per_orbit: float = 0.0017     # panel eff loss per orbit (→ ~18% drop over 1 week)
+    capacity_decay_per_orbit: float = 645.0   # battery capacity loss (J) per orbit (→ ~67kJ drop)
+    min_panel_eff: float = 0.40               # floor — panels never go below 40%
+    min_capacity_j: float = 100_000.0         # floor — battery never below 100kJ
 
 
 @dataclass
@@ -103,8 +111,8 @@ class MAPPOConfig:
 
     # ── Training ──
     lr: float = 3e-4
-    batch_size: int = 256
-    num_epochs: int = 4                # PPO update epochs per rollout
+    batch_size: int = 1024             # Increased to optimize CPU matrix mult
+    num_epochs: int = 2                # Reduced to speed up PPO backprop passes
     rollout_steps: int = 1176          # ≈ 1 orbit at dt=5 s
 
     # ── Scaling ──
