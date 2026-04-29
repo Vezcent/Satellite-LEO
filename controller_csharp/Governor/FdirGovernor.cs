@@ -106,6 +106,26 @@ public sealed class FdirGovernor
             overridden = true;
         }
 
+        // ── Power Safety Layer ───────────────────────────────────
+        // Hard safety net: conserve power when battery is critically low.
+        // This catches scenarios where the AI hasn't learned to manage
+        // late-life degradation (panels < 60%, reduced capacity).
+        double soc = state.BatterySoc;
+        if (soc < 0.30)
+        {
+            // CRITICAL: Force deep sleep + payload off
+            action.DeepSleep = 1;
+            action.PayloadOn = 0;
+            action.Throttle  = 0f;
+            overridden = true;
+        }
+        else if (soc < 0.50)
+        {
+            // WARNING: Conserve power — payload off
+            action.PayloadOn = 0;
+            overridden = true;
+        }
+
         return action;
     }
 

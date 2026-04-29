@@ -219,34 +219,42 @@ def export_model(checkpoint_path: str,
 #  CLI entry point
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-def _find_latest_checkpoint(ckpt_dir: str = "checkpoints") -> str:
-    """Find the latest checkpoint from the FIXED training pipeline.
-    Fixed-pipeline checkpoints are ~92KB (independent trunks).
-    Old broken checkpoints are ~272KB (shared trunk) — skip those.
+def _find_best_checkpoint(ckpt_dir: str = "checkpoints") -> str:
+    """Find the best checkpoint from the FIXED training pipeline based on reward.
     """
     import glob
     candidates = glob.glob(os.path.join(ckpt_dir, "mappo_phase3_*.pt"))
     if not candidates:
         raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
     
-    # Filter to only new-pipeline checkpoints (< 150KB)
-    new_pipeline = [f for f in candidates if os.path.getsize(f) < 150_000]
-    if not new_pipeline:
-        raise FileNotFoundError(
-            "No checkpoints from the fixed training pipeline found.\n"
-            "Old checkpoints (~272KB) use the broken shared-trunk architecture.\n"
-            "Run training first: python train.py --phase 3 --device cpu"
-        )
+    new_pipeline = candidates
     
-    # Sort by modification time, newest first
-    new_pipeline.sort(key=os.path.getmtime, reverse=True)
-    return new_pipeline[0]
+    best_file = None
+    best_reward = float("-inf")
+    
+    # Read each checkpoint and find the one with the highest reward
+    for f in new_pipeline:
+        try:
+            ckpt = torch.load(f, map_location="cpu", weights_only=False)
+            rew = ckpt.get("best_reward", float("-inf"))
+            if rew > best_reward:
+                best_reward = rew
+                best_file = f
+        except Exception:
+            continue
+            
+    if best_file is None:
+        # Fallback to newest if we couldn't read rewards
+        new_pipeline.sort(key=os.path.getmtime, reverse=True)
+        return new_pipeline[0]
+        
+    return best_file
 
 
 def main():
     parser = argparse.ArgumentParser(description="S-MAS ONNX Export")
     parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Path to .pt checkpoint file (auto-detects latest if omitted)")
+                        help="Path to .pt checkpoint file (auto-detects BEST if omitted)")
     parser.add_argument("--output_dir", type=str, default="onnx_export",
                         help="Directory for ONNX files")
     parser.add_argument("--fp16", action="store_true",
@@ -255,10 +263,10 @@ def main():
                         help="Copy exported models to controller_csharp/models/")
     args = parser.parse_args()
 
-    # Auto-detect latest checkpoint if not specified
+    # Auto-detect best checkpoint if not specified
     if args.checkpoint is None:
-        args.checkpoint = _find_latest_checkpoint()
-        print(f"  Auto-detected latest checkpoint: {args.checkpoint}")
+        args.checkpoint = _find_best_checkpoint()
+        print(f"  Auto-detected best checkpoint: {args.checkpoint}")
 
     export_model(args.checkpoint, args.output_dir, args.fp16)
 

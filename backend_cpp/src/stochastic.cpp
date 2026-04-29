@@ -137,7 +137,7 @@ void ModelDrift::step() {
 
     panel_eff_ += constants::PANEL_DRIFT_SIGMA * gauss_(rng_);
     // Also apply slow secular degradation from radiation
-    panel_eff_ -= 1e-8; // tiny per-step trend (cumulative over 15 years)
+    panel_eff_ -= 2e-9; // per-step trend (~1.5%/year, realistic for GaAs in LEO)
     panel_eff_ = smas::compat::clamp(panel_eff_, 0.3, 1.0);
 }
 

@@ -97,13 +97,14 @@ public sealed class InferenceEngine : IDisposable
         var actionTensor = navResults.First().AsTensor<float>();
 
         // action[0..2] are thrust in [-1, 1] (already tanh-squashed)
-        // action[3] is throttle: tanh gives [-1,1], map to [0,1]
+        // action[3] is throttle: tanh gives [-1,1], map to [0,1] with a 5% deadband to prevent micro-thrusting
+        float rawThrottle = (actionTensor[0, 3] + 1f) / 2f;
         var nav = new NavigationAction
         {
             ThrustX  = actionTensor[0, 0],
             ThrustY  = actionTensor[0, 1],
             ThrustZ  = actionTensor[0, 2],
-            Throttle = (actionTensor[0, 3] + 1f) / 2f,  // [-1,1] → [0,1]
+            Throttle = rawThrottle > 0.05f ? rawThrottle : 0.0f,
         };
 
         // ── Resource Head ────────────────────────────────────────

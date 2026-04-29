@@ -188,10 +188,10 @@ class SatelliteEnv:
             self._lib.smas_set_time(self._handle, ct.c_double(start_time))
             
             # ── Degradation Training ──
-            # Start at a random "mission age" (healthier range since we
-            # progressively degrade during the episode)
-            capacity_j = np.random.uniform(200000.0, 360000.0)
-            panel_eff = np.random.uniform(0.70, 1.0)
+            # Start at a random "mission age" to cover the full lifecycle.
+            # Wide range ensures the agent sees both fresh AND severely aged hardware.
+            capacity_j = np.random.uniform(120000.0, 360000.0)
+            panel_eff = np.random.uniform(0.45, 1.0)
             self._lib.smas_set_degradation(self._handle, ct.c_double(capacity_j), ct.c_double(panel_eff))
             
             # Track for progressive degradation during the episode

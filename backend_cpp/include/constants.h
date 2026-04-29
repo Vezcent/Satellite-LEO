@@ -58,7 +58,7 @@ constexpr double SEU_SAA_MULT      = 100.0;
 
 // ── Model Drift (Epistemic Uncertainty) ───────────────────────────
 constexpr double CD_DRIFT_SIGMA    = 0.001;     // per step σ for Cd random walk
-constexpr double PANEL_DRIFT_SIGMA = 0.0001;    // per step σ for panel efficiency
+constexpr double PANEL_DRIFT_SIGMA = 0.00003;    // per step σ for panel efficiency (reduced for 20yr realism)
 
 // ── SAA Boundary (coarse bounding box for quick checks) ───────────
 constexpr double SAA_LAT_MIN = -50.0;

@@ -181,10 +181,14 @@ class MissionReward:
                 # CRITICAL: Payload ON inside SAA → massive penalty
                 r_mission -= self.cfg.w_saa_penalty
             elif valid_target:
-                # Fix #2: Battery safety floor — penalise greedy imaging at low SoC
-                if state.battery_soc < 0.3:
+                # Fix #2: Dynamic battery safety floor based on degraded capacity
+                # A 35-min eclipse requires ~60,000J. We enforce an 80,000J buffer to be safe.
+                safe_soc_floor = 80000.0 / max(state.battery_capacity_j, 1000.0)
+                
+                if state.battery_soc < safe_soc_floor:
                     # Low battery but still trying to image → punish greed
-                    r_mission -= self.survival.cfg.w_dod * 2
+                    # Penalty MUST be larger than w_valid_target to prevent reward hacking
+                    r_mission -= self.cfg.w_valid_target * 1.5
                 elif not self._has_imaged_current_target:
                     # Fix #1: First step over this target → grant full bonus
                     r_mission += self.cfg.w_valid_target

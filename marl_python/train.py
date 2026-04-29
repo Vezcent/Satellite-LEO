@@ -83,7 +83,7 @@ def train(train_cfg: TrainConfig,
 
         # We keep running until Env[0] is done or we hit a step limit
         # This is a simple way to track "episodes" in a multi-env setup
-        while not done_list[0]:
+        while episode_steps < env_cfg.max_steps_per_episode:
             for b in buffers: b.reset()
             
             # ── Collect rollout ──
@@ -106,19 +106,16 @@ def train(train_cfg: TrainConfig,
 
                 # 2. Step all envs
                 for i in range(env_cfg.num_envs):
-                    if done_list[i]: continue
-
                     action_dict = {
                         "nav": np.array([
                             nav_acts[i,0], nav_acts[i,1], nav_acts[i,2],
-                            (nav_acts[i,3] + 1.0) / 2.0
+                            ((nav_acts[i,3] + 1.0) / 2.0) if ((nav_acts[i,3] + 1.0) / 2.0) > 0.05 else 0.0
                         ], dtype=np.float32),
                         "bus": int(bus_acts[i]),
                         "mission": int(mis_acts[i]) if phase >= 3 else 0,
                     }
 
                     raw_state, _, done, info = envs[i].step(action_dict)
-                    next_obs = obs_builder.build(raw_state)
 
                     # Reward
                     if phase >= 3:
@@ -137,13 +134,18 @@ def train(train_cfg: TrainConfig,
                                     nav_lps[i], bus_lps[i], done,
                                     mission_act=float(mis_acts[i]), mission_lp=mis_lps[i])
 
+                    # Auto-reset environment on death so it cannot skip time
+                    if done:
+                        raw_state = envs[i].reset()
+
+                    next_obs = obs_builder.build(raw_state)
                     obs_list[i] = next_obs
                     done_list[i] = done
                     total_steps += 1
-                    episode_steps += 1
+                
+                # episode_steps tracks simulation time (1 step = 5s across all envs)
+                episode_steps += 1
 
-                if all(done_list): break
-            
             # ── PPO Update ──
             # Estimate last value and compute GAE for each environment separately
             for i in range(env_cfg.num_envs):
@@ -161,8 +163,6 @@ def train(train_cfg: TrainConfig,
             ep_value_loss += losses.get("value_loss", 0)
             ep_entropy += losses.get("entropy", 0)
             ep_update_count += 1
-
-            if done_list[0]: break
 
         # ── Episode Summary ──
         episode_count += 1
@@ -190,7 +190,7 @@ def train(train_cfg: TrainConfig,
         print(base)
 
         # Save
-        if episode_count % 10 == 0:
+        if episode_count % 1 == 0:
             os.makedirs("checkpoints", exist_ok=True)
             path = f"checkpoints/mappo_phase{phase}_ep{episode_count}.pt"
             torch.save({
