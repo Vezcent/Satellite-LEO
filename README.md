@@ -15,7 +15,7 @@ The system utilizes a multi-layered environmental dataset (2000–2020) optimize
 * **Energy & Thermal Layer:** Analytical Ray-Tracing using a Cylindrical Shadow Model to calculate Beta angles and eclipse durations without external API reliance.
 * **Communication Constraints:** Geometric Line-of-Sight (LoS) calculations based on Spherical Trigonometry and a $5^\circ$ elevation mask for ESA ground stations (Redu and Kiruna).
 
-## 2. Satellite Engine & Physics Models (Inspired from Unreal Engine)
+## 2. Satellite Engine & Physics Models 
 
 Developed as a high-performance shared library (C++/C) integrated with a C# orchestration layer, transitioning from pure training to mission-grade simulation:
 
