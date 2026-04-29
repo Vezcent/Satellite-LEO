@@ -49,8 +49,8 @@ constexpr int    ACT_DELAY_MIN    = 1;           // steps
 constexpr int    ACT_DELAY_MAX    = 3;
 
 // ── Battery Degradation (Arrhenius-inspired) ──────────────────────
-constexpr double BATT_CYCLE_DEGRAD  = 0.00005;  // capacity loss / cycle
-constexpr double BATT_THERMAL_FACT  = 0.001;
+constexpr double BATT_CYCLE_DEGRAD  = 0.00002;  // capacity loss / cycle (calibrated for 20yr LEO life)
+constexpr double BATT_THERMAL_FACT  = 0.00005;   // thermal acceleration (reduced from 0.001 — old value killed battery in 1.7yr)
 
 // ── SEU Parameters ────────────────────────────────────────────────
 constexpr double SEU_BASE_PROB     = 0.001;
