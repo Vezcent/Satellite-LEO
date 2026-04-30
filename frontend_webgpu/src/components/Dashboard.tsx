@@ -111,7 +111,7 @@ export default function Dashboard() {
               </div>
               {isDead && data && (
                 <div style={{ fontSize: '0.7rem', color: '#F87171', marginTop: '0.2rem' }}>
-                  Cause: {data.doneReason === 1 ? 'BATTERY DEPLETED' : data.doneReason === 2 ? 'COMMS LOST >72h' : data.doneReason === 3 ? 'REENTRY <200km' : `CODE ${data.doneReason}`}
+                  Cause: {data.doneReason === 1 ? 'BATTERY DEPLETED' : data.doneReason === 2 ? 'COMMS LOST >72h' : data.doneReason === 3 ? 'REENTRY <200km' : data.doneReason === 4 ? 'SEU FATAL (RADIATION)' : `CODE ${data.doneReason}`}
                 </div>
               )}
             </div>

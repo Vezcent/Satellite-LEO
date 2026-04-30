@@ -49,12 +49,15 @@ bool SEUGenerator::check_seu(float saa_flux_10mev) {
 }
 
 bool SEUGenerator::is_fatal(float saa_flux_10mev) {
-    // Fatal SEU: very low probability even inside SAA
-    double prob = constants::SEU_BASE_PROB * 0.01; // 1% of normal SEU rate
+    // Fatal SEU: extremely rare — real satellites survive 20+ years.
+    // PROBA-1 has operated since 2001 without a fatal SEU.
+    // Old: 0.01 of base rate → ~378 fatal rolls in 6 years (guaranteed death)
+    // New: 0.0001 of base rate → ~3.8 fatal rolls in 6 years (~0.004% chance)
+    double prob = constants::SEU_BASE_PROB * 0.0001;
     if (saa_flux_10mev > constants::SAA_FLUX_THRESHOLD) {
         prob *= 10.0 * (saa_flux_10mev / 10000.0);
     }
-    prob = std::min(prob, 0.01);
+    prob = std::min(prob, 0.001);
     return uniform_(rng_) < prob;
 }
 
