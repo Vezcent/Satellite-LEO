@@ -18,6 +18,7 @@ out vec3 vNormal;
 out vec3 vLocalNormal;
 out vec2 vUV;
 out vec3 vPosition;
+out vec3 vLocalPos;
 
 void main() {
   vec4 pos = uModelViewMatrix * vec4(aVertexPosition, 1.0);
@@ -25,6 +26,7 @@ void main() {
   vPosition = pos.xyz;
   vNormal = mat3(uNormalMatrix) * aNormal;
   vLocalNormal = aNormal;
+  vLocalPos = aVertexPosition;
   vUV = aUV;
   vColor = uColor;
 }
@@ -38,11 +40,13 @@ in vec3 vNormal;
 in vec3 vLocalNormal;
 in vec2 vUV;
 in vec3 vPosition;
+in vec3 vLocalPos;
 
 uniform vec3 uSunDir;
 uniform sampler2D uHeatmap;
 uniform float uIsEarth; // 1.0 = solid, 0.5 = wireframe, 0.0 = sat
 uniform float uAtmDensity;
+uniform float uEarthRotation; // current Earth rotation angle (radians)
 
 vec3 colormap(float x) {
     float r = clamp(1.5 - abs(4.0 * x - 3.0), 0.0, 1.0);
@@ -76,8 +80,23 @@ void main() {
     
     vec3 litColor = earthColor * (0.1 + 0.9 * diff) + vec3(0.6, 0.8, 1.0) * spec * diff;
     
-    // Sample heatmap
-    float heat = texture(uHeatmap, vec2(vUV.x, 1.0 - vUV.y)).r;
+    // Dynamic SAA heatmap — compute geographic UV from local position
+    // Undo Earth rotation to get true geographic coordinates
+    float cosR = cos(-uEarthRotation);
+    float sinR = sin(-uEarthRotation);
+    vec3 geoPos = vec3(
+        vLocalPos.x * cosR - vLocalPos.z * sinR,
+        vLocalPos.y,
+        vLocalPos.x * sinR + vLocalPos.z * cosR
+    );
+    float geoLat = asin(clamp(geoPos.y / length(geoPos), -1.0, 1.0));
+    float geoLon = atan(geoPos.z, geoPos.x);
+    // Map lat [-π/2, π/2] → [0, 1], lon [-π, π] → [0, 1]
+    vec2 geoUV = vec2(
+        (geoLon + 3.14159) / (2.0 * 3.14159),
+        1.0 - (geoLat + 1.5708) / 3.14159
+    );
+    float heat = texture(uHeatmap, geoUV).r;
     vec3 heatColor = vec3(0.0);
     if (heat > 0.01) {
         heatColor = colormap(heat) * 2.5;
@@ -154,8 +173,10 @@ export class WebGLContext implements IRenderContext {
   private uHeatmap!: WebGLUniformLocation;
   private uIsEarth!: WebGLUniformLocation;
   private uAtmDensity!: WebGLUniformLocation;
+  private uEarthRotation!: WebGLUniformLocation;
   
   private heatmapTex!: WebGLTexture;
+  private currentEarthRotation = 0;
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
     const gl = canvas.getContext('webgl2', { antialias: true });
@@ -181,6 +202,7 @@ export class WebGLContext implements IRenderContext {
     this.uHeatmap = gl.getUniformLocation(this.program, 'uHeatmap')!;
     this.uIsEarth = gl.getUniformLocation(this.program, 'uIsEarth')!;
     this.uAtmDensity = gl.getUniformLocation(this.program, 'uAtmDensity')!;
+    this.uEarthRotation = gl.getUniformLocation(this.program, 'uEarthRotation')!
 
     const earthGeo = createSphere(6371, 64, 64); // Increased segments for smoother specular
     this.vaoEarth = this.createVao(earthGeo.positions, earthGeo.normals, earthGeo.uvs, earthGeo.indices);
@@ -355,13 +377,17 @@ export class WebGLContext implements IRenderContext {
 
     // 1. Earth
     const earthModelView = mat4.clone(this.viewMatrix);
-    mat4.rotateY(earthModelView, earthModelView, time * 0.00005);
+    this.currentEarthRotation = time * 0.00005;
+    mat4.rotateY(earthModelView, earthModelView, this.currentEarthRotation);
     gl.uniformMatrix4fv(this.uModelView, false, earthModelView);
     
     const normalMatrix = mat4.create();
     mat4.invert(normalMatrix, earthModelView);
     mat4.transpose(normalMatrix, normalMatrix);
     gl.uniformMatrix4fv(this.uNormalMatrix, false, normalMatrix);
+
+    // Pass Earth rotation to shader for dynamic heatmap geo-referencing
+    gl.uniform1f(this.uEarthRotation, this.currentEarthRotation);
 
     gl.bindVertexArray(this.vaoEarth);
 

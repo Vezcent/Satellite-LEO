@@ -12,7 +12,8 @@ struct Uniforms {
   sunDir: vec4<f32>,
   isEarth: f32,
   atmDensity: f32,
-  pad2: f32, pad3: f32,
+  earthRotation: f32,
+  pad3: f32,
 };
 
 fn colormap(x: f32) -> vec3<f32> {
@@ -39,6 +40,7 @@ struct VertexOutput {
   @location(2) uv: vec2<f32>,
   @location(3) viewPos: vec3<f32>,
   @location(4) localNormal: vec3<f32>,
+  @location(5) localPos: vec3<f32>,
 };
 
 @vertex
@@ -49,6 +51,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
   output.viewPos = pos.xyz;
   output.normal = (uniforms.normalMatrix * vec4<f32>(in.normal, 0.0)).xyz;
   output.localNormal = in.normal;
+  output.localPos = in.position;
   output.uv = in.uv;
   output.color = uniforms.color;
   return output;
@@ -80,8 +83,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     let litColor = earthColor * (0.1 + 0.9 * diff) + vec3<f32>(0.6, 0.8, 1.0) * spec * diff;
     
-    let uvFlipped = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
-    let heat = textureSample(heatmapTexture, heatmapSampler, uvFlipped).r;
+    // Dynamic SAA heatmap — compute geographic UV from local position
+    let cosR = cos(-uniforms.earthRotation);
+    let sinR = sin(-uniforms.earthRotation);
+    let geoPos = vec3<f32>(
+        in.localPos.x * cosR - in.localPos.z * sinR,
+        in.localPos.y,
+        in.localPos.x * sinR + in.localPos.z * cosR
+    );
+    let geoLat = asin(clamp(geoPos.y / length(geoPos), -1.0, 1.0));
+    let geoLon = atan2(geoPos.z, geoPos.x);
+    let geoUV = vec2<f32>(
+        (geoLon + 3.14159) / (2.0 * 3.14159),
+        1.0 - (geoLat + 1.5708) / 3.14159
+    );
+    let heat = textureSample(heatmapTexture, heatmapSampler, geoUV).r;
     
     var heatColor = vec3<f32>(0.0);
     if (heat > 0.01) {
@@ -409,18 +425,19 @@ export class WebGPUContext implements IRenderContext {
     mat4.invert(normalMatrix, earthModelView);
     mat4.transpose(normalMatrix, normalMatrix);
 
-    const updateUniform = (buffer: GPUBuffer, mv: mat4, color: vec3, isEarth: number) => {
+    const updateUniform = (buffer: GPUBuffer, mv: mat4, color: vec3, isEarth: number, earthRot: number = 0) => {
       const data = new Float32Array(60); 
       data.set(mv, 0);
       data.set(this.projMatrix, 16);
       data.set(normalMatrix, 32);
       data.set([...color, 1.0], 48);
       data.set(sunDir, 52);
-      data.set([isEarth, normDensity, 0, 0], 56);
+      data.set([isEarth, normDensity, earthRot, 0], 56);
       this.device.queue.writeBuffer(buffer, 0, data);
     };
 
-    updateUniform(this.earthUniformBuffer, earthModelView, vec3.fromValues(1,1,1), 1.0);
+    const earthRotation = time * 0.00005;
+    updateUniform(this.earthUniformBuffer, earthModelView, vec3.fromValues(1,1,1), 1.0, earthRotation);
     const wireModelView = mat4.clone(earthModelView);
     mat4.scale(wireModelView, wireModelView, [1.002, 1.002, 1.002]);
     updateUniform(this.earthWireUniformBuffer, wireModelView, vec3.fromValues(0.15, 0.35, 0.6), 0.5);

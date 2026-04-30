@@ -119,11 +119,23 @@ public sealed class FdirGovernor
             action.Throttle  = 0f;
             overridden = true;
         }
-        else if (soc < 0.50)
+        else if (soc < 0.60)
         {
             // WARNING: Conserve power — payload off
             action.PayloadOn = 0;
             overridden = true;
+        }
+
+        // ── Eclipse Power Conservation ──────────────────────────
+        // During eclipse there is ZERO solar input. Force deep sleep
+        // to minimise drain (5W instead of 30W bus draw).
+        // This is the primary defense against battery death.
+        if (state.InEclipse == 1)
+        {
+            action.DeepSleep = 1;
+            action.PayloadOn = 0;
+            if (action.DeepSleep != aiActions.DeepSleep || action.PayloadOn != aiActions.PayloadOn)
+                overridden = true;
         }
 
         return action;
