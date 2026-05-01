@@ -45,7 +45,7 @@ export default function Dashboard() {
   }, [data]);
 
   const getFdirColor = (mode?: FdirMode) => {
-    switch(mode) {
+    switch (mode) {
       case FdirMode.Nominal: return 'var(--color-nominal)';
       case FdirMode.Degraded: return 'var(--color-degraded)';
       case FdirMode.Safe: return 'var(--color-safe)';
@@ -55,7 +55,7 @@ export default function Dashboard() {
   };
 
   const getFdirLabel = (mode?: FdirMode) => {
-    switch(mode) {
+    switch (mode) {
       case FdirMode.Nominal: return 'NOMINAL';
       case FdirMode.Degraded: return 'DEGRADED';
       case FdirMode.Safe: return 'SAFE';
@@ -72,9 +72,9 @@ export default function Dashboard() {
   return (
     <>
       <canvas ref={canvasRef} id="canvas-container" />
-      
+
       <div className="hud-overlay">
-        
+
         {/* ── Top Bar ── */}
         <div className="hud-header">
           {/* Left: Title + Connection */}
@@ -117,15 +117,15 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          
+
           {/* Right: System State */}
           <div className={`glass-panel ${isAlert ? 'pulse-alert' : ''}`}
-               style={{
-                 padding: '1rem 1.25rem',
-                 display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-                 borderColor: getFdirColor(data?.fdirMode),
-                 maxWidth: '14rem'
-               }}>
+            style={{
+              padding: '1rem 1.25rem',
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+              borderColor: getFdirColor(data?.fdirMode),
+              maxWidth: '14rem'
+            }}>
             <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', marginBottom: '0.25rem' }}>
               SYSTEM STATE
             </div>
@@ -137,7 +137,7 @@ export default function Dashboard() {
             </div>
             {data?.seuActive && (
               <div style={{ fontSize: '0.7rem', color: '#F87171', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <ShieldAlert size={12}/> SEU DETECTED
+                <ShieldAlert size={12} /> SEU DETECTED
               </div>
             )}
           </div>
@@ -145,21 +145,21 @@ export default function Dashboard() {
 
         {/* ── Bottom Stats ── */}
         <div className="hud-bottom">
-          
+
           {/* Main Stats Panel */}
           <div className="glass-panel" style={{ padding: '1.25rem', width: '20rem' }}>
             <div className="stat-row">
-              <div className="stat-label"><Orbit size={18}/> Altitude</div>
+              <div className="stat-label"><Orbit size={18} /> Altitude</div>
               <div className="stat-value">{data ? data.altitudeKm.toFixed(1) : '---'} km</div>
             </div>
             <div className="stat-row">
-              <div className="stat-label"><Battery size={18}/> SoC</div>
+              <div className="stat-label"><Battery size={18} /> SoC</div>
               <div className="stat-value" style={{ color: data && data.batterySoc < 0.2 ? 'var(--color-safe)' : 'white' }}>
                 {data ? (data.batterySoc * 100).toFixed(1) : '---'}%
               </div>
             </div>
             <div className="stat-row">
-              <div className="stat-label"><Activity size={18}/> Velocity</div>
+              <div className="stat-label"><Activity size={18} /> Velocity</div>
               <div className="stat-value" style={{ fontSize: '1.1rem' }}>
                 7.60 km/s
               </div>
@@ -169,7 +169,7 @@ export default function Dashboard() {
           {/* AI / Action Panel */}
           <div className="glass-panel" style={{ padding: '1.25rem', flex: '1', maxWidth: '28rem' }}>
             <h3 style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <Cpu size={16}/> AGENT ACTIONS
+              <Cpu size={16} /> AGENT ACTIONS
             </h3>
             <div className="action-grid">
               <div className="action-cell">
@@ -188,16 +188,16 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-          
+
           {/* Environment Panel */}
           <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <div className="env-row">
-               <ThermometerSun size={20} style={{ color: data?.inEclipse ? 'var(--color-text-muted)' : '#FACC15' }}/>
-               <span>{data?.inEclipse ? 'ECLIPSE' : 'SUNLIGHT'}</span>
+              <ThermometerSun size={20} style={{ color: data?.inEclipse ? 'var(--color-text-muted)' : '#FACC15' }} />
+              <span>{data?.inEclipse ? 'ECLIPSE' : 'SUNLIGHT'}</span>
             </div>
             <div className="env-row">
-               <Radio size={20} style={{ color: data?.gsVisible ? '#34D399' : 'var(--color-text-muted)' }}/>
-               <span>{data?.gsVisible ? 'COMMS UP' : 'LOS'}</span>
+              <Radio size={20} style={{ color: data?.gsVisible ? '#34D399' : 'var(--color-text-muted)' }} />
+              <span>{data?.gsVisible ? 'COMMS UP' : 'LOS'}</span>
             </div>
           </div>
 
