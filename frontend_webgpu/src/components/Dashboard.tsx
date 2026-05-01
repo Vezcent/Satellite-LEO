@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useTelemetry, FdirMode } from '../lib/telemetry';
 import { Activity, Battery, ShieldAlert, Cpu, Radio, Orbit, ThermometerSun, Clock, Skull } from 'lucide-react';
 import Renderer from '../engine/Renderer';
+import MusicPlayer from './MusicPlayer';
 import '../App.css';
 
 /** Convert simulation seconds to a human-readable lifetime string */
@@ -202,6 +203,7 @@ export default function Dashboard() {
 
         </div>
       </div>
+      <MusicPlayer />
     </>
   );
 }

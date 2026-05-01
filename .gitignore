@@ -31,3 +31,7 @@ backend_cpp/build/
 /ROADMAP.txt
 /PLAN.txt
 /Update_Lifetime.txt
+
+# Music files (keep folder, ignore contents)
+/music/*
+!/music/.gitkeep
