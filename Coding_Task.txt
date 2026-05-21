@@ -1,0 +1,734 @@
+═══════════════════════════════════════════════════════════════════════════════
+  S-MAS — CODING TASK LIST (Chi tiết từng file, từng dòng code)
+  Created: 2026-05-22
+  Purpose: Đủ chi tiết để model nhẹ hoặc dev tự follow được
+═══════════════════════════════════════════════════════════════════════════════
+
+  CURRENT STATE:
+    obs_dim = 37  |  StatePacket = 202B  |  ActionPacket = 20B
+    DLL đã build ✓  |  Python integration test ✓  |  ONNX cũ KHÔNG tương thích
+    Cần retrain từ đầu trước khi chạy C# controller hoặc frontend
+
+  ORDER:  Step 1 (Retrain) → Step 2 (Frontend) → Step 3 (V&V)
+          → Step 4 (ADCS) → Retrain lần 2 → Step 5,6,7,8
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  STEP 1: RETRAIN MODEL
+  Không cần code — chỉ chạy lệnh
+═══════════════════════════════════════════════════════════════════════════════
+
+  Terminal 1 — Phase 2 Survival:
+  ─────────────────────────────
+    cd "E:\Satellite LEO"
+    .\.venv\Scripts\Activate.ps1
+    cd marl_python
+    python train.py --phase 2 --total_steps 1000000 --device cpu
+
+    Kỳ vọng: ~2-4h, model học sống sót + quản lý fuel/thermal
+    Output:  checkpoints/mappo_phase2_ep*.pt
+
+  Terminal 2 — Phase 3 Full Mission (sau khi Phase 2 xong):
+  ──────────────────────────────────────────────────────────
+    python train.py --phase 3 --total_steps 10000000 --device cpu --resume checkpoints/mappo_phase2_ep<LAST>.pt
+
+    Kỳ vọng: ~20-40h, model học imaging + coordination
+    Output:  checkpoints/mappo_phase3_ep*.pt
+
+  Terminal 3 — Export ONNX:
+  ─────────────────────────
+    python export_onnx.py --checkpoint checkpoints/mappo_phase3_ep<BEST>.pt
+
+    Output: 3 files trong models/:
+      smas_nav.onnx, smas_bus.onnx, smas_mission.onnx
+
+  VERIFY:
+    Copy 3 file .onnx vào controller_csharp/models/
+    cd ../controller_csharp
+    dotnet run -c Release -- --test --data-dir "..\preprocessed-data" --model-dir "models"
+    → Phải pass ABI check (202B/20B) và ONNX load (obs_dim=37)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  STEP 2: FRONTEND & POLISH
+═══════════════════════════════════════════════════════════════════════════════
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 2.1: telemetry.ts — Parse new StatePacket fields
+  File: E:\Satellite LEO\frontend_webgpu\src\lib\telemetry.ts
+────────────────────────────────────────────────────────────────────
+
+  CONTEXT: File này decode binary WebSocket packets từ C# controller.
+  Hiện tại parse 184B payload. Cần mở rộng lên 202B.
+
+  StatePacket layout (v2, 202 bytes, pack=1):
+    Offset 0:    version          u8
+    Offset 1:    sim_time_s       f64
+    Offset 9:    year             i32
+    Offset 13:   doy              i32
+    Offset 17:   hour             i32
+    Offset 21:   pos_x            f64
+    Offset 29:   pos_y            f64
+    Offset 37:   pos_z            f64
+    Offset 45:   vel_x            f64
+    Offset 53:   vel_y            f64
+    Offset 61:   vel_z            f64
+    Offset 69:   altitude_km      f64
+    Offset 77:   latitude_deg     f64
+    Offset 85:   longitude_deg    f64
+    Offset 93:   battery_soc      f64
+    Offset 101:  battery_cap_j    f64
+    Offset 109:  solar_power_w    f64
+    Offset 117:  power_draw_w     f64
+    Offset 125:  atm_density      f64
+    Offset 133:  drag_force_n     f64
+    Offset 141:  saa_flux_10mev   f32
+    Offset 145:  saa_flux_30mev   f32
+    Offset 149:  in_eclipse       u8
+    Offset 150:  in_saa           u8
+    Offset 151:  gs_visible       u8
+    Offset 152:  time_since_s     f64
+    Offset 160:  fdir_mode        u8
+    Offset 161:  panel_eff        f64
+    Offset 169:  drag_coeff       f64
+    Offset 177:  charge_cycles    u32
+    Offset 181:  is_done          u8
+    Offset 182:  done_reason      u8
+    Offset 183:  seu_active       u8
+    --- NEW FIELDS (Phase A) ---
+    Offset 184:  fuel_fraction    f32      ← THÊM
+    Offset 188:  fuel_depleted    u8       ← THÊM
+    Offset 189:  temp_bus         f32      ← THÊM
+    Offset 193:  temp_battery     f32      ← THÊM
+    Offset 197:  temp_payload     f32      ← THÊM
+    Offset 201:  heater_on        u8       ← THÊM
+    Total: 202 bytes
+
+  CODE CHANGES:
+    1. Tìm interface TelemetryData (hoặc tương đương), thêm fields:
+         fuelFraction: number;    // 0.0 - 1.0
+         fuelDepleted: boolean;
+         tempBus: number;         // °C
+         tempBattery: number;     // °C
+         tempPayload: number;     // °C
+         heaterOn: boolean;
+
+    2. Tìm hàm parse/decode DataView, thêm sau seu_active:
+         const fuelFraction = view.getFloat32(offset + 184, true);
+         const fuelDepleted = view.getUint8(offset + 188) !== 0;
+         const tempBus      = view.getFloat32(offset + 189, true);
+         const tempBattery  = view.getFloat32(offset + 193, true);
+         const tempPayload  = view.getFloat32(offset + 197, true);
+         const heaterOn     = view.getUint8(offset + 201) !== 0;
+
+    3. Cập nhật payload size check (nếu có) từ 184 → 202
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 2.2: Dashboard.tsx — Fuel gauge + Temp cards
+  File: E:\Satellite LEO\frontend_webgpu\src\components\Dashboard.tsx
+────────────────────────────────────────────────────────────────────
+
+  THÊM 2 COMPONENTS MỚI vào Dashboard:
+
+  1. FUEL GAUGE (circular ring, giống SoC gauge):
+     - Hiển thị fuelFraction * 100 %
+     - Color coding:
+         > 50%: green (#22C55E)
+         > 20%: amber (#F59E0B)
+         ≤ 20%: red  (#EF4444)
+         = 0%:  grey + "DEPLETED" text
+     - Label: "PROPELLANT"
+
+  2. THERMAL PANEL (3 temperature bars + heater LED):
+     - 3 horizontal bars cho temp_bus, temp_battery, temp_payload
+     - Bar range: -40°C to +60°C
+     - Safe zone highlight:
+         Bus:     [-20, 50] °C green, outside = amber/red
+         Battery: [-10, 45] °C green, outside = amber/red
+         Payload: [-15, 40] °C green, outside = amber/red
+     - Heater LED: small dot, green khi heaterOn=true, grey khi off
+     - Label: "THERMAL"
+
+  CSS: Dùng cùng style system hiện tại (glassmorphism, deep space theme)
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 2.3: GroundControlPanel.tsx — New presets
+  File: E:\Satellite LEO\frontend_webgpu\src\components\GroundControlPanel.tsx
+────────────────────────────────────────────────────────────────────
+
+  Tìm mảng presets (hoặc scenarios), thêm 4 entries mới:
+
+  {
+    name: "Solar Maximum",
+    description: "Peak solar cycle — high atmospheric drag, fast orbital decay",
+    // Cần gửi WebSocket command để C# set start time tới solar max period
+  },
+  {
+    name: "Halloween Storm",
+    description: "Kp=9 geomagnetic storm — extreme SEU risk in SAA",
+    // Start time = Oct 29, 2003 (DOY 302, Year 2003)
+  },
+  {
+    name: "Fuel Critical",
+    description: "5% fuel remaining at 550km — test coasting strategy",
+    // Cần C# endpoint: set fuel_fraction + altitude
+  },
+  {
+    name: "Cold Eclipse",
+    description: "Long eclipse chain — heater stress test, battery cold soak",
+    // Start at high beta angle period for maximum eclipse duration
+  }
+
+  NOTE: Một số presets cần C# controller support (WebSocket commands).
+        Nếu C# chưa có endpoint, presets chỉ hiển thị description.
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 2.5: TelemetryLogger.cs — New CSV columns
+  File: E:\Satellite LEO\controller_csharp\Telemetry\TelemetryLogger.cs
+────────────────────────────────────────────────────────────────────
+
+  1. Tìm header string (CSV header row), thêm sau cột cuối:
+       ,...,fuel_fraction,temp_bus,temp_battery,temp_payload,heater_on
+
+  2. Tìm data row format, thêm tương ứng:
+       ,...,{state.FuelFraction:F4},{state.TempBus:F1},{state.TempBattery:F1},{state.TempPayload:F1},{state.HeaterOn}
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 2.6: visualize.py — Fuel + Temp plots
+  File: E:\Satellite LEO\marl_python\visualize.py (NEW hoặc EDIT)
+────────────────────────────────────────────────────────────────────
+
+  Script đọc CSV log từ TelemetryLogger và vẽ matplotlib:
+
+  import pandas as pd
+  import matplotlib.pyplot as plt
+
+  df = pd.read_csv("path/to/session.csv")
+
+  fig, axes = plt.subplots(4, 1, figsize=(14, 10), sharex=True)
+
+  # 1. Altitude
+  axes[0].plot(df["sim_time_h"], df["altitude_km"])
+  axes[0].set_ylabel("Altitude (km)")
+  axes[0].axhline(y=target_alt, color='r', linestyle='--', label='Target')
+
+  # 2. Battery SoC
+  axes[1].plot(df["sim_time_h"], df["battery_soc"] * 100)
+  axes[1].set_ylabel("SoC (%)")
+
+  # 3. Fuel
+  axes[2].plot(df["sim_time_h"], df["fuel_fraction"] * 100, color='orange')
+  axes[2].set_ylabel("Fuel (%)")
+  axes[2].axhline(y=10, color='r', linestyle='--', label='Critical')
+
+  # 4. Temperature
+  axes[3].plot(df["sim_time_h"], df["temp_bus"], label="Bus")
+  axes[3].plot(df["sim_time_h"], df["temp_battery"], label="Battery")
+  axes[3].plot(df["sim_time_h"], df["temp_payload"], label="Payload")
+  axes[3].axhspan(-10, 45, alpha=0.1, color='green', label='Safe zone')
+  axes[3].set_ylabel("Temp (°C)")
+  axes[3].legend()
+
+  axes[3].set_xlabel("Time (hours)")
+  plt.tight_layout()
+  plt.savefig("telemetry_plot.png", dpi=150)
+  plt.show()
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  STEP 3: CONTINUOUS V&V
+═══════════════════════════════════════════════════════════════════════════════
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 3.1: Monte Carlo test
+  File: E:\Satellite LEO\tests\monte_carlo.py (NEW)
+────────────────────────────────────────────────────────────────────
+
+  PSEUDOCODE:
+
+  import sys; sys.path.insert(0, "../marl_python")
+  from env_wrapper import SatelliteEnv
+  from observation import ObservationBuilder
+  from config import EnvConfig, ObsConfig
+  import numpy as np, csv
+
+  NUM_SEEDS = 100
+  MAX_STEPS = 17280 * 30  # 30 days per episode
+
+  results = []
+  for seed in range(NUM_SEEDS):
+      np.random.seed(seed)
+      env = SatelliteEnv(EnvConfig())
+      obs_b = ObservationBuilder()
+
+      state = env.reset(randomize=True)
+      target_alt = env._target_alt_km
+
+      for step in range(MAX_STEPS):
+          # No-op action (test passive survival)
+          action = {"nav": np.zeros(4), "bus": 0, "mission": 0}
+          state, _, done, info = env.step(action)
+          if done:
+              break
+
+      results.append({
+          "seed": seed,
+          "survival_steps": step,
+          "survival_days": step * 5 / 86400,
+          "final_alt": state.altitude_km,
+          "final_soc": state.battery_soc,
+          "final_fuel": state.fuel_fraction,
+          "min_temp_bat": ...,  # track during loop
+          "max_temp_bat": ...,
+          "done_reason": state.done_reason,
+          "target_alt": target_alt,
+      })
+
+  # Write CSV + print statistics
+  # Plot histogram of survival_days
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 3.2: Worst-case scenarios
+  File: E:\Satellite LEO\tests\worst_case_scenarios.py (NEW)
+────────────────────────────────────────────────────────────────────
+
+  6 SCENARIOS (mỗi cái = 1 function):
+
+  def scenario_1_max_eclipse():
+      """Start at time with longest consecutive eclipse chains"""
+      env = SatelliteEnv(EnvConfig())
+      env.reset()
+      # Set time to winter solstice period (max eclipse at high inclination)
+      env._lib.smas_set_time(env._handle, ct.c_double(86400 * 355))
+      # Run 7 days, count eclipse minutes, verify survival
+      ...
+
+  def scenario_2_geomagnetic_storm():
+      """Kp=9 while passing through SAA"""
+      # Start time: Oct 29, 2003 (Halloween storm)
+      # year=2003, doy=302 → seconds = search in space_weather.csv
+      ...
+
+  def scenario_3_telemetry_blackout():
+      """48h without ground station contact"""
+      # Note: current engine handles this via time_since_contact_s
+      # Run and verify agent survives without comms for 48h
+      ...
+
+  def scenario_4_fuel_exhaustion():
+      """fuel=0 at 500km altitude"""
+      env = SatelliteEnv(EnvConfig())
+      env.reset()
+      # Manually set fuel to 0 (need C API or run until depleted)
+      ...
+
+  def scenario_5_cold_soak():
+      """Simulate heater failure — battery temp drops below -20°C"""
+      # Would need engine modification to disable heater
+      # OR: long eclipse at low solar activity
+      ...
+
+  def scenario_6_panel_degradation():
+      """Panel efficiency = 30%"""
+      env = SatelliteEnv(EnvConfig())
+      env.reset()
+      env._lib.smas_set_degradation(env._handle,
+          ct.c_double(120000.0),  # severely degraded battery
+          ct.c_double(0.30))      # 30% panel efficiency
+      # Run 30 days, verify survival strategy
+      ...
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 3.3: Regression suite
+  File: E:\Satellite LEO\tests\regression_suite.py (NEW)
+────────────────────────────────────────────────────────────────────
+
+  import unittest
+
+  class TestABI(unittest.TestCase):
+      def test_statepacket_size(self):
+          from env_wrapper import StatePacket
+          import ctypes
+          self.assertEqual(ctypes.sizeof(StatePacket), 202)
+
+      def test_actionpacket_size(self):
+          from env_wrapper import ActionPacket
+          import ctypes
+          self.assertEqual(ctypes.sizeof(ActionPacket), 20)
+
+  class TestObservation(unittest.TestCase):
+      def test_obs_dim(self):
+          from observation import ObservationBuilder
+          b = ObservationBuilder()
+          self.assertEqual(b.obs_dim, 37)
+
+      def test_obs_range(self):
+          """All obs values should be roughly in [-5, 5]"""
+          ...
+
+  class TestPhysics(unittest.TestCase):
+      def test_fuel_conservation(self):
+          """Thrust should consume fuel via Tsiolkovsky"""
+          ...
+
+      def test_thermal_equilibrium(self):
+          """After 1000 steps in sunlight, temps should stabilize"""
+          ...
+
+      def test_orbital_decay(self):
+          """30-day propagation should lose < 5km altitude"""
+          ...
+
+  if __name__ == "__main__":
+      unittest.main()
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  STEP 4: ADCS — ATTITUDE DYNAMICS
+  ⚠️ THAY ĐỔI LỚN — obs_dim 37→~43, PHẢI RETRAIN SAU KHI XONG
+═══════════════════════════════════════════════════════════════════════════════
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 4.1-4.2: attitude.h + attitude.cpp
+  Files: E:\Satellite LEO\backend_cpp\include\attitude.h (NEW)
+         E:\Satellite LEO\backend_cpp\src\attitude.cpp (NEW)
+────────────────────────────────────────────────────────────────────
+
+  // attitude.h
+  #pragma once
+  #include "types.h"
+
+  namespace smas {
+
+  struct AttitudeState {
+      double q0 = 1.0, q1 = 0.0, q2 = 0.0, q3 = 0.0;  // quaternion
+      double wx = 0.0, wy = 0.0, wz = 0.0;              // angular vel (rad/s)
+      double wheel_h[3] = {0, 0, 0};                     // wheel momentum (Nms)
+      double sun_angle = 0.0;     // angle between panel normal and sun (rad)
+      double nadir_error = 0.0;   // pointing error from nadir (rad)
+  };
+
+  class AttitudeModel {
+  public:
+      void reset();
+      void step(double dt, const Vec3& pos_eci, const Vec3& sun_dir,
+                const double* wheel_torque_cmd);  // 3-axis torque command
+
+      AttitudeState state;
+
+      // Derived
+      double cos_sun_angle() const;   // for solar power
+      bool is_nadir_pointing(double tol_deg = 5.0) const;
+
+  private:
+      void compute_gravity_gradient_torque(const Vec3& pos_eci);
+      void compute_srp_torque(const Vec3& sun_dir);
+      void integrate_quaternion(double dt);
+      void update_wheels(double dt, const double* cmd);
+
+      Vec3 gg_torque_{0,0,0};
+      Vec3 srp_torque_{0,0,0};
+  };
+
+  }  // namespace smas
+
+  // attitude.cpp — Key equations:
+  //
+  // Quaternion kinematics:
+  //   q_dot = 0.5 * q ⊗ [0, wx, wy, wz]
+  //   q_new = normalize(q + q_dot * dt)
+  //
+  // Gravity gradient torque (simplified):
+  //   T_gg = (3 * mu / r^5) * (r × (I · r))
+  //   Approximate: T_gg ≈ 3*mu/r^3 * (Iz-Iy) * sin(2θ) / 2
+  //   For PROBA-1: ~10^-7 Nm (very small)
+  //
+  // Reaction wheel:
+  //   h_dot = torque_cmd - T_external
+  //   Saturation: |h| < H_MAX (typically 0.1-1.0 Nms for small sat)
+  //
+  // Sun angle:
+  //   panel_normal = attitude_matrix * [0, 0, 1]  (body Z = panel normal)
+  //   sun_angle = acos(dot(panel_normal, sun_dir))
+  //
+  // Nadir error:
+  //   nadir_dir = -normalize(pos_eci)
+  //   body_z = attitude_matrix * [0, 0, 1]
+  //   nadir_error = acos(dot(body_z, nadir_dir))
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 4.3: Tích hợp vào simulation_engine
+  File: E:\Satellite LEO\backend_cpp\src\simulation_engine.cpp
+────────────────────────────────────────────────────────────────────
+
+  Thêm attitude step vào pipeline, SAU orbital integration, TRƯỚC power:
+
+  // Step 5.5: Attitude dynamics (Phase A ADCS)
+  attitude_.step(dt, {px, py, pz}, sun_dir, wheel_cmd);
+
+  // Step 6: Power budget — SỬA solar power calculation:
+  // OLD:  solar_w = SAT_SOLAR_POWER_W * panel_eff * (in_eclipse ? 0.0 : 1.0)
+  // NEW:  solar_w = SAT_SOLAR_POWER_W * panel_eff * attitude_.cos_sun_angle()
+  //       (cos_sun_angle() already returns 0 when in eclipse)
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 4.4: contracts.h — New StatePacket fields
+  File: E:\Satellite LEO\backend_cpp\include\contracts.h
+────────────────────────────────────────────────────────────────────
+
+  Thêm sau heater_on:
+
+      // Attitude (ADCS)
+      float    sun_angle;         // rad, [0, π]
+      float    nadir_error;       // rad, [0, π]
+      float    wheel_momentum_x;  // Nms
+      float    wheel_momentum_y;  // Nms
+      float    wheel_momentum_z;  // Nms
+
+  StatePacket size: 202 → 222 bytes (thêm 5 × f32 = 20B)
+  Bump version to 3.
+
+  ĐỒng thời cập nhật:
+    - Contracts.cs (C#)
+    - env_wrapper.py (Python ctypes)
+    - telemetry.ts (Frontend)
+    - ObservationBuilder.cs + observation.py (obs_dim 37 → 42)
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 4.5: observation.py — Expand obs
+  File: E:\Satellite LEO\marl_python\observation.py
+────────────────────────────────────────────────────────────────────
+
+  Thêm sau target_alt feature (index 32), trước lag features:
+
+  # ── 11. Attitude features (5) — ADCS ────────────────────────
+  obs.append(_minmax(float(getattr(s, 'sun_angle', 0.0)),
+                     0.0, 3.14159))           # [0, π] → [0, 1]
+  obs.append(_minmax(float(getattr(s, 'nadir_error', 0.0)),
+                     0.0, 3.14159))           # [0, π] → [0, 1]
+  obs.append(_minmax(float(getattr(s, 'wheel_momentum_x', 0.0)),
+                     -1.0, 1.0))              # Nms
+  obs.append(_minmax(float(getattr(s, 'wheel_momentum_y', 0.0)),
+                     -1.0, 1.0))
+  obs.append(_minmax(float(getattr(s, 'wheel_momentum_z', 0.0)),
+                     -1.0, 1.0))
+
+  Config update:
+    attitude_features: int = 5
+    obs_dim → 42 (37 + 5)
+
+  ALTERNATIVE (simplified):
+    Nếu chỉ làm Phase 4a (simplified ADCS):
+    - Chỉ thêm sun_angle (1 feature) → obs_dim = 38
+    - Bỏ qua wheel_momentum, nadir_error
+    - Đơn giản hơn nhiều, vẫn fix được vấn đề solar power accuracy
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 4.6: CMakeLists.txt — Add attitude.cpp
+  File: E:\Satellite LEO\backend_cpp\CMakeLists.txt
+────────────────────────────────────────────────────────────────────
+
+  Tìm list source files, thêm:
+    src/attitude.cpp
+
+  Sau đó rebuild DLL:
+    cd "E:\Satellite LEO\backend_cpp"
+    Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+    mkdir build
+    cmd.exe /c " ""C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"" && cd /d ""E:\Satellite LEO\backend_cpp\build"" && cmake -G ""NMake Makefiles"" -DCMAKE_BUILD_TYPE=Release .. && nmake "
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 4.7: Retrain lần 2
+────────────────────────────────────────────────────────────────────
+
+  Giống Step 1 nhưng với obs_dim mới (42):
+    python train.py --phase 2 --total_steps 1000000 --device cpu
+    python train.py --phase 3 --total_steps 10000000 --device cpu --resume ...
+    python export_onnx.py --checkpoint ...
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  STEP 5: ONBOARD COMPUTE LIMITS (ngắn)
+═══════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────
+  TASK 5.1: export_onnx.py — INT8/FP16
+  File: E:\Satellite LEO\marl_python\export_onnx.py
+────────────────────────────────────────────────────────────────────
+
+  Thêm CLI arg --quantize {fp32, fp16, int8}
+
+  FP16:
+    from onnxconverter_common import float16
+    model_fp16 = float16.convert_float_to_float16(onnx_model)
+
+  INT8:
+    from onnxruntime.quantization import quantize_dynamic, QuantType
+    quantize_dynamic(model_path, output_path, weight_type=QuantType.QInt8)
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 5.2: Program.cs — Watchdog
+  File: E:\Satellite LEO\controller_csharp\Program.cs
+────────────────────────────────────────────────────────────────────
+
+  Wrap inference call in timeout:
+
+  var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+  try {
+      var result = await Task.Run(() => inference.Run(obs), cts.Token);
+  } catch (OperationCanceledException) {
+      // Inference timeout → force SAFE mode
+      governor.ForceMode(FdirMode.Safe);
+      Log.Warning("Inference timeout — entering SAFE mode");
+  }
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  STEP 6: 4-SATELLITE CONSTELLATION
+═══════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────
+  TASK 6.1: Program.cs — 4 engine instances
+  File: E:\Satellite LEO\controller_csharp\Program.cs
+────────────────────────────────────────────────────────────────────
+
+  PSEUDOCODE:
+
+  const int NUM_SATS = 4;
+  var engines = new PhysicsEngine[NUM_SATS];
+  var governors = new FdirGovernor[NUM_SATS];
+  var obsBuilders = new ObservationBuilder[NUM_SATS];
+
+  int[] seeds = { 42, 43, 44, 45 };
+  double[] timeOffsets = { 0, 24*3600, 48*3600, 72*3600 };
+
+  for (int i = 0; i < NUM_SATS; i++) {
+      engines[i] = new PhysicsEngine(dataDir);
+      engines[i].Reset();
+      engines[i].SetTime(timeOffsets[i]);
+      governors[i] = new FdirGovernor();
+      obsBuilders[i] = new ObservationBuilder();
+  }
+
+  // Main loop: step all 4
+  bool constellationDone = false;
+  while (!constellationDone) {
+      for (int i = 0; i < NUM_SATS; i++) {
+          if (engines[i].IsDone) continue;
+          var obs = obsBuilders[i].Build(engines[i].State);
+          var action = inference.Run(obs);
+          action = governors[i].Apply(action, engines[i].State);
+          engines[i].Step(action);
+      }
+      constellationDone = engines.All(e => e.IsDone);
+      // Send telemetry for all 4
+  }
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 6.2: TelemetryPacket.cs — Add SatID
+  File: E:\Satellite LEO\controller_csharp\Telemetry\TelemetryPacket.cs
+────────────────────────────────────────────────────────────────────
+
+  Header change:
+    OLD: [Version(1B) | Seq(4B) | PayloadLen(4B) | Payload | CRC32(4B)]
+    NEW: [Version(1B) | SatID(1B) | Seq(4B) | PayloadLen(4B) | Payload | CRC32(4B)]
+
+  Serialize:
+    buffer[0] = Version;
+    buffer[1] = (byte)satId;           // ← NEW
+    BinaryPrimitives.WriteInt32LE(buffer, 2, sequence);  // offset shift +1
+    BinaryPrimitives.WriteInt32LE(buffer, 6, payloadLen); // offset shift +1
+    ...
+
+  ⚠️ BREAKING CHANGE — frontend telemetry.ts parser phải cùng update
+
+
+────────────────────────────────────────────────────────────────────
+  TASK 6.3-6.5: Frontend — Multi-satellite
+  Files: telemetry.ts, Dashboard.tsx, Renderer.ts
+────────────────────────────────────────────────────────────────────
+
+  telemetry.ts:
+    const satId = view.getUint8(1);  // byte 1 = satellite ID
+    // Maintain array: satellites[satId] = parsedData
+
+  Dashboard.tsx:
+    // 2×2 CSS Grid layout
+    <div className="constellation-grid">
+      {satellites.map((sat, i) => (
+        <SatellitePanel key={i} data={sat} color={SAT_COLORS[i]} />
+      ))}
+    </div>
+
+    const SAT_COLORS = ['#3B82F6', '#22C55E', '#F59E0B', '#A855F7'];
+
+  Renderer.ts:
+    // 4 dots, each at its own lat/lon/alt
+    for (let i = 0; i < 4; i++) {
+        const pos = latLonAltToECEF(sat[i].lat, sat[i].lon, sat[i].alt);
+        drawDot(pos, sat[i].isDead ? '#666' : SAT_COLORS[i]);
+    }
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  QUICK REFERENCE — KEY FILE PATHS
+═══════════════════════════════════════════════════════════════════════════════
+
+  C++ Engine:
+    E:\Satellite LEO\backend_cpp\include\contracts.h
+    E:\Satellite LEO\backend_cpp\include\constants.h
+    E:\Satellite LEO\backend_cpp\include\simulation_engine.h
+    E:\Satellite LEO\backend_cpp\src\simulation_engine.cpp
+    E:\Satellite LEO\backend_cpp\src\c_api.cpp
+    E:\Satellite LEO\backend_cpp\CMakeLists.txt
+
+  Python Training:
+    E:\Satellite LEO\marl_python\config.py
+    E:\Satellite LEO\marl_python\env_wrapper.py
+    E:\Satellite LEO\marl_python\observation.py
+    E:\Satellite LEO\marl_python\reward.py
+    E:\Satellite LEO\marl_python\train.py
+    E:\Satellite LEO\marl_python\mappo.py
+    E:\Satellite LEO\marl_python\export_onnx.py
+
+  C# Controller:
+    E:\Satellite LEO\controller_csharp\Interop\Contracts.cs
+    E:\Satellite LEO\controller_csharp\AI\ObservationBuilder.cs
+    E:\Satellite LEO\controller_csharp\AI\InferenceEngine.cs
+    E:\Satellite LEO\controller_csharp\Program.cs
+    E:\Satellite LEO\controller_csharp\Telemetry\TelemetryLogger.cs
+    E:\Satellite LEO\controller_csharp\Telemetry\TelemetryPacket.cs
+
+  Frontend:
+    E:\Satellite LEO\frontend_webgpu\src\lib\telemetry.ts
+    E:\Satellite LEO\frontend_webgpu\src\components\Dashboard.tsx
+    E:\Satellite LEO\frontend_webgpu\src\components\GroundControlPanel.tsx
+    E:\Satellite LEO\frontend_webgpu\src\engine\Renderer.ts
+
+  Build:
+    cd "E:\Satellite LEO\backend_cpp"
+    Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+    mkdir build
+    cmd.exe /c " ""C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"" && cd /d ""E:\Satellite LEO\backend_cpp\build"" && cmake -G ""NMake Makefiles"" -DCMAKE_BUILD_TYPE=Release .. && nmake "
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  END OF CODING TASKS
+  Steps 7-8 (Phase B, C) sẽ detail khi gần tới
+═══════════════════════════════════════════════════════════════════════════════

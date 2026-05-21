@@ -14,6 +14,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.WebSockets;
+using System.Text;
 
 namespace SmasController.Telemetry;
 
@@ -34,6 +35,12 @@ public sealed class WebSocketServer : IDisposable
 
     public int Port { get; }
     public int ConnectedClients => _clients.Count;
+
+    /// <summary>
+    /// Fired when a client sends a text (JSON) message.
+    /// The string parameter contains the raw JSON command.
+    /// </summary>
+    public event Action<string>? OnCommandReceived;
 
     /// <summary>
     /// Create a WebSocket telemetry server.
@@ -164,7 +171,7 @@ public sealed class WebSocketServer : IDisposable
 
     private async Task ReceiveLoop(Guid clientId, WebSocket ws, CancellationToken ct)
     {
-        var buf = new byte[256];
+        var buf = new byte[4096];
         try
         {
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
@@ -172,8 +179,20 @@ public sealed class WebSocketServer : IDisposable
                 var result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct);
                 if (result.MessageType == WebSocketMessageType.Close)
                     break;
-                // We don't expect client-to-server messages in this protocol,
-                // but we keep the loop alive to detect disconnects.
+
+                // Handle text messages (JSON commands from Ground Control Panel)
+                if (result.MessageType == WebSocketMessageType.Text && result.Count > 0)
+                {
+                    var json = Encoding.UTF8.GetString(buf, 0, result.Count);
+                    try
+                    {
+                        OnCommandReceived?.Invoke(json);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"  [WS] Command handler error: {ex.Message}");
+                    }
+                }
             }
         }
         catch { /* Expected on disconnect */ }

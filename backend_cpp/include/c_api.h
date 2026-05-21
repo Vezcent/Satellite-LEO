@@ -48,6 +48,21 @@ SMAS_API int smas_is_done(void* engine);
 // Destroy and free memory.
 SMAS_API void smas_destroy(void* engine);
 
+// Runtime environment tuning (Developer Testbed only).
+// Does NOT affect ActionPacket ABI. Call anytime between steps.
+SMAS_API void smas_set_environment(void* engine,
+                                    double seu_multiplier,
+                                    double noise_multiplier,
+                                    double drift_multiplier,
+                                    double density_multiplier);
+
+// Set target altitude for goal-conditioned training (Phase A).
+// Call once per episode after reset.
+SMAS_API void smas_set_target_altitude(void* engine, double alt_km);
+
+// Get current target altitude.
+SMAS_API double smas_get_target_altitude(void* engine);
+
 // Utility: return the size of StatePacket / ActionPacket for ABI checks.
 SMAS_API int smas_state_packet_size(void);
 SMAS_API int smas_action_packet_size(void);

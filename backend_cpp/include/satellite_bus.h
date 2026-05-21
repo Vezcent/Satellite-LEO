@@ -1,7 +1,6 @@
 /*
- * S-MAS: Power Subsystem & Realistic Degradation
- * Task 1.6 — Battery SoC, GaAs solar arrays, Arrhenius degradation,
- *            and the Failure Contract terminal conditions.
+ * S-MAS: Power Subsystem, Propellant Tracking & Realistic Degradation
+ * Task 1.6 + Phase A (fuel tracking, thermal integration)
  */
 #pragma once
 #include "contracts.h"
@@ -23,25 +22,37 @@ public:
     void update(bool in_eclipse, double panel_eff,
                 bool deep_sleep, bool payload_on, double dt);
 
-    // ── Getters ───────────────────────────────────────────────────
+    // ── Power Getters ─────────────────────────────────────────────
     double soc()              const { return soc_; }           // [0,1]
     double capacity_j()       const { return capacity_j_; }
     double solar_power_w()    const { return solar_w_; }
     double power_draw_w()     const { return draw_w_; }
     uint32_t charge_cycles()  const { return cycles_; }
 
-    // ── Battery Degradation ───────────────────────────────────────
-    //   Arrhenius-based: capacity loss per charge/discharge cycle.
-    //   Called once each time SoC crosses a threshold.
-    void apply_cycle_degradation();
+    // ── Fuel Getters (Phase A) ────────────────────────────────────
+    double fuel_kg()          const { return fuel_kg_; }
+    double fuel_fraction()    const;                           // [0,1]
+    bool   is_fuel_depleted() const { return fuel_kg_ <= 0.0; }
 
+    // ── Fuel Consumption ──────────────────────────────────────────
+    //   dv       : delta-v applied this step (m/s)
+    //   mass_kg  : current total spacecraft mass (kg)
+    //   Returns actual delta-v achievable (may be less if fuel runs out)
+    double consume_fuel(double dv, double mass_kg);
+
+    // ── Battery Degradation ───────────────────────────────────────
+    void apply_cycle_degradation();
     void set_degradation(double capacity_j);
 
+    // ── Thermal Integration (Phase A) ─────────────────────────────
+    //   Apply temperature-dependent capacity factor
+    //   factor in [0.5, 1.0]
+    void apply_thermal_factor(double factor);
+
+    //   Subtract heater power from battery energy
+    void apply_heater_draw(double heater_w, double dt);
+
     // ── Failure Contract (Done) ───────────────────────────────────
-    //   time_since_contact : seconds without ground station contact
-    //   altitude_km        : current altitude
-    //   seu_fatal          : true if a fatal SEU just fired
-    // Returns DoneReason (0 = ongoing).
     DoneReason check_failure(double time_since_contact,
                              double altitude_km,
                              bool   seu_fatal) const;
@@ -49,10 +60,13 @@ public:
 private:
     double   soc_;           // [0,1]
     double   capacity_j_;    // current max capacity (Joules)
+    double   effective_capacity_j_; // after thermal factor
     double   solar_w_;       // instantaneous solar generation
     double   draw_w_;        // instantaneous total draw
     uint32_t cycles_;        // accumulated charge/discharge count
     bool     was_charging_;  // for cycle detection edge
+    double   fuel_kg_;       // remaining propellant (kg)
+    double   thermal_factor_; // battery temp factor [0.5, 1.0]
 };
 
 } // namespace smas

@@ -55,12 +55,32 @@ SMAS_API void smas_destroy(void* engine) {
     delete eng;
 }
 
+SMAS_API void smas_set_environment(void* engine,
+                                    double seu_multiplier,
+                                    double noise_multiplier,
+                                    double drift_multiplier,
+                                    double density_multiplier) {
+    auto* eng = static_cast<smas::SimulationEngine*>(engine);
+    eng->set_environment(seu_multiplier, noise_multiplier,
+                         drift_multiplier, density_multiplier);
+}
+
 SMAS_API int smas_state_packet_size(void) {
     return static_cast<int>(sizeof(smas::StatePacket));
 }
 
 SMAS_API int smas_action_packet_size(void) {
     return static_cast<int>(sizeof(smas::ActionPacket));
+}
+
+SMAS_API void smas_set_target_altitude(void* engine, double alt_km) {
+    auto* eng = static_cast<smas::SimulationEngine*>(engine);
+    eng->set_target_altitude(alt_km);
+}
+
+SMAS_API double smas_get_target_altitude(void* engine) {
+    auto* eng = static_cast<smas::SimulationEngine*>(engine);
+    return eng->target_altitude_km();
 }
 
 #ifdef __cplusplus

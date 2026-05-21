@@ -52,6 +52,7 @@ void SimulationEngine::reset() {
     bus_.reset();
     actuator_.reset();
     drift_.reset();
+    thermal_.reset();
 
     // Time
     sim_time_struct_.year = init.elements.epoch_year;
@@ -80,6 +81,16 @@ void SimulationEngine::set_time(double time_s) {
 void SimulationEngine::set_degradation(double capacity_j, double panel_eff) {
     bus_.set_degradation(capacity_j);
     drift_.set_panel_efficiency(panel_eff);
+}
+
+void SimulationEngine::set_environment(double seu_multiplier,
+                                       double noise_multiplier,
+                                       double drift_rate_multiplier,
+                                       double density_multiplier) {
+    seu_multiplier_   = seu_multiplier;
+    noise_multiplier_ = noise_multiplier;
+    drift_multiplier_ = drift_rate_multiplier;
+    cfg_.density_multiplier = density_multiplier;
 }
 
 void SimulationEngine::update_time() {
@@ -190,7 +201,7 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
 
     // ── 3. Epistemic drift ────────────────────────────────────────
     if (cfg_.enable_drift) {
-        drift_.step();
+        drift_.step(drift_multiplier_);
     }
 
     // ── 4. Environment queries ────────────────────────────────────
@@ -223,17 +234,40 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     uint8_t gs_mask = visible_stations_mask(orbit_.pos,
                                              gs_list_.stations(), gmst);
 
-    // ── 5. Orbital integration ────────────────────────────────────
+    // ── 5. Orbital integration ────────────────────────────────────────
+    // Dynamic mass: account for fuel consumption
+    double current_mass = constants::SAT_MASS_KG -
+                          (constants::SAT_FUEL_KG - bus_.fuel_kg());
+
     AccelParams ap;
     ap.rho     = rho;
     ap.cd      = cfg_.enable_drift ? drift_.cd() : constants::SAT_CD_NOMINAL;
     ap.area_m2 = constants::SAT_AREA_M2;
-    ap.mass_kg = constants::SAT_MASS_KG;
+    ap.mass_kg = current_mass;
 
-    // Build thrust acceleration
-    Vec3 thrust_dir(exec_action.thrust_x, exec_action.thrust_y, exec_action.thrust_z);
-    ap.thrust_accel = thrust_acceleration(thrust_dir, exec_action.throttle,
-                                           cfg_.max_dv_per_step, ap.mass_kg);
+    // Build thrust acceleration (disabled if fuel depleted)
+    Vec3 thrust_accel_vec(0.0, 0.0, 0.0);
+    if (!bus_.is_fuel_depleted()) {
+        Vec3 thrust_dir(exec_action.thrust_x, exec_action.thrust_y, exec_action.thrust_z);
+        thrust_accel_vec = thrust_acceleration(thrust_dir, exec_action.throttle,
+                                               cfg_.max_dv_per_step, current_mass);
+
+        // Consume fuel (Tsiolkovsky)
+        double dv = thrust_accel_vec.magnitude() * constants::DT;
+        if (dv > 0.0) {
+            double actual_dv = bus_.consume_fuel(dv, current_mass);
+            if (actual_dv < dv && actual_dv > 0.0) {
+                // Scale thrust to achievable dv
+                double scale = actual_dv / dv;
+                thrust_accel_vec = Vec3(thrust_accel_vec.x * scale,
+                                        thrust_accel_vec.y * scale,
+                                        thrust_accel_vec.z * scale);
+            } else if (actual_dv <= 0.0) {
+                thrust_accel_vec = Vec3(0.0, 0.0, 0.0);
+            }
+        }
+    }
+    ap.thrust_accel = thrust_accel_vec;
 
     orbit_ = rk4_step(orbit_, ap);
 
@@ -243,6 +277,15 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
                 exec_action.deep_sleep != 0,
                 exec_action.payload_on != 0,
                 constants::DT);
+
+    // ── 6.5 Thermal subsystem (Phase A) ──────────────────────────
+    thermal_.update(eclipse, bus_.solar_power_w(),
+                    bus_.power_draw_w(), constants::DT);
+    bus_.apply_thermal_factor(thermal_.battery_temp_factor());
+    double heater_w = thermal_.heater_power_w();
+    if (heater_w > 0.0) {
+        bus_.apply_heater_draw(heater_w, constants::DT);
+    }
 
     // ── 7. Communication tracking ─────────────────────────────────
     if (gs_mask != 0) {
@@ -255,8 +298,17 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     bool seu_spike = false;
     bool seu_fatal = false;
     if (cfg_.enable_seu) {
-        seu_spike = seu_gen_.check_seu(flux.flux_10mev);
+        seu_spike = seu_gen_.check_seu(flux.flux_10mev, seu_multiplier_);
         if (seu_spike) {
+            seu_fatal = seu_gen_.is_fatal(flux.flux_10mev);
+        }
+    }
+    // Ground inject override (one-shot from Developer Testbed)
+    if (raw_action.inject_seu) {
+        seu_spike = true;
+        // Ground-injected SEU should also have a chance to be fatal,
+        // boosted by the current seu_multiplier for stress testing.
+        if (!seu_fatal) {
             seu_fatal = seu_gen_.is_fatal(flux.flux_10mev);
         }
     }
@@ -274,8 +326,8 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
 
     // Orbital — optionally inject sensor noise
     if (cfg_.enable_noise) {
-        Vec3 np = sensor_noise_.noisy_position(orbit_.pos);
-        Vec3 nv = sensor_noise_.noisy_velocity(orbit_.vel);
+        Vec3 np = sensor_noise_.noisy_position(orbit_.pos, 50.0, noise_multiplier_);
+        Vec3 nv = sensor_noise_.noisy_velocity(orbit_.vel, 0.5, noise_multiplier_);
         state_.pos_x = np.x; state_.pos_y = np.y; state_.pos_z = np.z;
         state_.vel_x = nv.x; state_.vel_y = nv.y; state_.vel_z = nv.z;
     } else {
@@ -287,7 +339,7 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     state_.longitude_deg = geo.longitude_deg;
 
     // Power
-    state_.battery_soc       = cfg_.enable_noise ? sensor_noise_.noisy_soc(bus_.soc()) : bus_.soc();
+    state_.battery_soc       = cfg_.enable_noise ? sensor_noise_.noisy_soc(bus_.soc(), 0.01, noise_multiplier_) : bus_.soc();
     state_.battery_capacity_j = bus_.capacity_j();
     state_.solar_power_w     = bus_.solar_power_w();
     state_.power_draw_w      = bus_.power_draw_w();
@@ -320,6 +372,16 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
 
     // SEU
     state_.seu_active = seu_spike ? 1 : 0;
+
+    // Fuel (Phase A)
+    state_.fuel_fraction = static_cast<float>(bus_.fuel_fraction());
+    state_.fuel_depleted = bus_.is_fuel_depleted() ? 1 : 0;
+
+    // Thermal (Phase A)
+    state_.temp_bus     = static_cast<float>(thermal_.temp_bus());
+    state_.temp_battery = static_cast<float>(thermal_.temp_battery());
+    state_.temp_payload = static_cast<float>(thermal_.temp_payload());
+    state_.heater_on    = thermal_.heater_on() ? 1 : 0;
 
     return state_;
 }

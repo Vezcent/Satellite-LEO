@@ -42,7 +42,8 @@ def train(train_cfg: TrainConfig,
     obs_builder = ObservationBuilder()
     reward_fn = SurvivalReward(reward_cfg) if phase < 3 else MissionReward(reward_cfg, mission_rew_cfg)
 
-    obs_list = [obs_builder.build(e.reset(randomize=True)) for e in envs]
+    obs_list = [obs_builder.build(e.reset(randomize=True),
+                                   target_alt_km=e._target_alt_km) for e in envs]
     done_list = [False] * env_cfg.num_envs
     
     # Brain
@@ -138,7 +139,8 @@ def train(train_cfg: TrainConfig,
                     if done:
                         raw_state = envs[i].reset()
 
-                    next_obs = obs_builder.build(raw_state)
+                    next_obs = obs_builder.build(raw_state,
+                                                  target_alt_km=envs[i]._target_alt_km)
                     obs_list[i] = next_obs
                     done_list[i] = done
                     total_steps += 1
@@ -179,6 +181,8 @@ def train(train_cfg: TrainConfig,
                 f"R {episode_reward:8.1f} | "
                 f"SoC {envs[0].state.battery_soc*100:5.1f}% | "
                 f"Alt {envs[0].state.altitude_km:6.1f}km | "
+                f"Fuel {envs[0].state.fuel_fraction*100:4.1f}% | "
+                f"T {envs[0].state.temp_battery:5.1f}C | "
                 f"FDIR {envs[0].state.fdir_mode} | "
                 f"pi {avg_pi:.4f} | "
                 f"v {avg_v:.4f} | "
@@ -205,7 +209,8 @@ def train(train_cfg: TrainConfig,
 
         # Reset for next episode
         for i in range(env_cfg.num_envs):
-            obs_list[i] = obs_builder.build(envs[i].reset(randomize=True))
+            obs_list[i] = obs_builder.build(envs[i].reset(randomize=True),
+                                             target_alt_km=envs[i]._target_alt_km)
             done_list[i] = False
 
     print("\nTraining Complete.")

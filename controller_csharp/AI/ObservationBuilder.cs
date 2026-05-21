@@ -1,32 +1,44 @@
 /*
- * S-MAS Phase 4 — AI/ObservationBuilder.cs
+ * S-MAS Phase A — AI/ObservationBuilder.cs
  *
  * Exact 1:1 C# port of marl_python/observation.py.
- * Converts a raw StatePacket into a normalised 29-dim float[] vector
+ * Converts a raw StatePacket into a normalised 37-dim float[] vector
  * suitable for ONNX model input.
  *
  * Layout (deterministic, matching Python):
- *   [0-5]   orbit:  alt, lat, lon, |v|, vx/|v|, vy/|v|
- *   [6-9]   power:  soc, cap_frac, solar_w, draw_w
- *   [10-14] env:    log_rho, log_flux10, log_flux30, eclipse, saa
- *   [15-16] comm:   gs_any, t_contact_norm
- *   [17-20] fdir:   one_hot(mode, 4)
- *   [21-23] degrad: panel_eff, cd_norm, cycles_norm
- *   [24]    seu:    seu_active
- *   [25-28] lag:    kp_3h, f107_3h, kp_6h, f107_6h (zeros for now)
- *   Total = 29
+ *   [0-6]   orbit:   alt, lat, lon, |v|, vx/|v|, vy/|v|, vz/|v|
+ *   [7-10]  power:   soc, cap_frac, solar_w, draw_w
+ *   [11-15] env:     log_rho, log_flux10, log_flux30, eclipse, saa
+ *   [16-17] comm:    gs_any, t_contact_norm
+ *   [18-21] fdir:    one_hot(mode, 4)
+ *   [22-24] degrad:  panel_eff, cd_norm, cycles_norm
+ *   [25]    seu:     seu_active
+ *   [26-27] fuel:    fuel_fraction, fuel_depleted
+ *   [28-31] thermal: temp_bus, temp_battery, temp_payload, heater_on
+ *   [32]    target:  target_alt_norm
+ *   [33-36] lag:     kp_3h, f107_3h, kp_6h, f107_6h (zeros for now)
+ *   Total = 37
  */
 using SmasController.Interop;
 
 namespace SmasController.AI;
 
 /// <summary>
-/// Builds a normalised 29-dim observation vector from a StatePacket.
+/// Builds a normalised 37-dim observation vector from a StatePacket.
 /// All normalisation logic exactly mirrors observation.py.
 /// </summary>
 public sealed class ObservationBuilder
 {
-    public const int ObsDim = 30;
+    public const int ObsDim = 37;
+
+    // Goal-conditioned altitude range (must match config.py)
+    private const double TargetAltMin = 550.0;
+    private const double TargetAltMax = 750.0;
+
+    /// <summary>
+    /// Current target altitude (set per episode or from Dashboard).
+    /// </summary>
+    public double TargetAltKm { get; set; } = 600.0;
 
     /// <summary>
     /// Build the observation vector from a raw StatePacket.
@@ -36,8 +48,8 @@ public sealed class ObservationBuilder
         var obs = new float[ObsDim];
         int i = 0;
 
-        // ── 1. Orbit features (6) ─────────────────────────────────
-        obs[i++] = MinMax(s.AltitudeKm, 200.0, 700.0);
+        // ── 1. Orbit features (7) ─────────────────────────────────
+        obs[i++] = MinMax(s.AltitudeKm, 200.0, 800.0);
         obs[i++] = MinMax(s.LatitudeDeg, -90.0, 90.0);
         obs[i++] = MinMax(s.LongitudeDeg, -180.0, 180.0);
 
@@ -86,7 +98,20 @@ public sealed class ObservationBuilder
         // ── 7. SEU (1) ────────────────────────────────────────────
         obs[i++] = s.SeuActive;
 
-        // ── 8. Lag features (4) — placeholder zeros ───────────────
+        // ── 8. Fuel features (2) — Phase A ────────────────────────
+        obs[i++] = s.FuelFraction;         // [0,1]
+        obs[i++] = s.FuelDepleted;         // 0/1
+
+        // ── 9. Thermal features (4) — Phase A ─────────────────────
+        obs[i++] = MinMax(s.TempBus, -40.0, 60.0);
+        obs[i++] = MinMax(s.TempBattery, -40.0, 60.0);
+        obs[i++] = MinMax(s.TempPayload, -40.0, 60.0);
+        obs[i++] = s.HeaterOn;             // 0/1
+
+        // ── 10. Target altitude (1) — Phase A (goal-conditioned) ──
+        obs[i++] = MinMax(TargetAltKm, TargetAltMin, TargetAltMax);
+
+        // ── 11. Lag features (4) — placeholder zeros ──────────────
         obs[i++] = 0f;
         obs[i++] = 0f;
         obs[i++] = 0f;

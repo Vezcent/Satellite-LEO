@@ -22,7 +22,7 @@ from config import EnvConfig
 # ═══════════════════════════════════════════════════════════════════
 
 class StatePacket(ct.Structure):
-    """Matches smas::StatePacket (version 1, 184 bytes, packed)."""
+    """Matches smas::StatePacket (version 2, packed)."""
     _pack_ = 1
     _fields_ = [
         ("version",             ct.c_uint8),
@@ -67,11 +67,19 @@ class StatePacket(ct.Structure):
         ("done_reason",         ct.c_uint8),
         # SEU
         ("seu_active",          ct.c_uint8),
+        # Fuel (Phase A)
+        ("fuel_fraction",       ct.c_float),
+        ("fuel_depleted",       ct.c_uint8),
+        # Thermal (Phase A)
+        ("temp_bus",            ct.c_float),
+        ("temp_battery",        ct.c_float),
+        ("temp_payload",        ct.c_float),
+        ("heater_on",           ct.c_uint8),
     ]
 
 
 class ActionPacket(ct.Structure):
-    """Matches smas::ActionPacket (version 1, 19 bytes, packed)."""
+    """Matches smas::ActionPacket (version 1, 20 bytes, packed)."""
     _pack_ = 1
     _fields_ = [
         ("version",     ct.c_uint8),
@@ -81,6 +89,7 @@ class ActionPacket(ct.Structure):
         ("throttle",    ct.c_float),
         ("deep_sleep",  ct.c_uint8),
         ("payload_on",  ct.c_uint8),
+        ("inject_seu",  ct.c_uint8),
     ]
 
 
@@ -153,6 +162,12 @@ class SatelliteEnv:
         # size checks
         self._lib.smas_state_packet_size.restype  = ct.c_int
         self._lib.smas_action_packet_size.restype = ct.c_int
+        # smas_set_target_altitude(engine, alt_km) -> void  (Phase A)
+        self._lib.smas_set_target_altitude.argtypes = [ct.c_void_p, ct.c_double]
+        self._lib.smas_set_target_altitude.restype  = None
+        # smas_get_target_altitude(engine) -> double  (Phase A)
+        self._lib.smas_get_target_altitude.argtypes = [ct.c_void_p]
+        self._lib.smas_get_target_altitude.restype  = ct.c_double
 
     def _create_engine(self):
         data_dir = self.cfg.data_dir.encode("utf-8")
@@ -188,8 +203,6 @@ class SatelliteEnv:
             self._lib.smas_set_time(self._handle, ct.c_double(start_time))
             
             # ── Degradation Training ──
-            # Start at a random "mission age" to cover the full lifecycle.
-            # Wide range ensures the agent sees both fresh AND severely aged hardware.
             capacity_j = np.random.uniform(120000.0, 360000.0)
             panel_eff = np.random.uniform(0.45, 1.0)
             self._lib.smas_set_degradation(self._handle, ct.c_double(capacity_j), ct.c_double(panel_eff))
@@ -198,10 +211,21 @@ class SatelliteEnv:
             self._current_panel_eff = panel_eff
             self._current_capacity_j = capacity_j
             self._progressive_degradation = True
+
+            # ── Goal-conditioned altitude (Phase A) ──
+            from config import ObsConfig
+            obs_cfg = ObsConfig()
+            self._target_alt_km = np.random.uniform(
+                obs_cfg.target_alt_min, obs_cfg.target_alt_max)
+            self._lib.smas_set_target_altitude(
+                self._handle, ct.c_double(self._target_alt_km))
         else:
             self._current_panel_eff = 1.0
             self._current_capacity_j = 360000.0
             self._progressive_degradation = False
+            self._target_alt_km = 600.0
+            self._lib.smas_set_target_altitude(
+                self._handle, ct.c_double(self._target_alt_km))
             
         self._step_count = 0
         self._prev_fdir = 0
@@ -213,6 +237,7 @@ class SatelliteEnv:
         self._action.throttle   = 0.0
         self._action.deep_sleep = 0
         self._action.payload_on = 0
+        self._action.inject_seu = 0
         self._lib.smas_step(
             self._handle,
             ct.byref(self._action),
@@ -290,8 +315,11 @@ class SatelliteEnv:
             "fdir_mode":   self._state.fdir_mode,
             "done_reason": self._state.done_reason,
             "prev_fdir":   self._prev_fdir,
-            "payload_on":  mission,         # actual value sent (post-override)
+            "payload_on":  mission,
             "meta_override": bus == 1 and int(action.get("mission", 0)) == 1,
+            "target_alt_km": self._target_alt_km,
+            "fuel_fraction": float(self._state.fuel_fraction),
+            "temp_battery":  float(self._state.temp_battery),
         }
 
         self._prev_fdir = self._state.fdir_mode

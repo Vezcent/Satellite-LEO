@@ -67,6 +67,15 @@ public static class EngineApi
     /// <summary>Return sizeof(ActionPacket) from C++ for ABI validation.</summary>
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     public static extern int smas_action_packet_size();
+
+    /// <summary>Runtime environment tuning (Developer Testbed only).</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void smas_set_environment(
+        IntPtr engine,
+        double seuMultiplier,
+        double noiseMultiplier,
+        double driftMultiplier,
+        double densityMultiplier);
 }
 
 /// <summary>
@@ -129,6 +138,14 @@ public sealed class PhysicsEngine : IDisposable
 
     /// <summary>Check if the current episode has ended.</summary>
     public bool IsDone => EngineApi.smas_is_done(_handle) != 0;
+
+    /// <summary>Tune stochastic environment parameters at runtime (Developer Testbed).</summary>
+    public void SetEnvironment(double seuMultiplier, double noiseMultiplier,
+                               double driftMultiplier, double densityMultiplier)
+    {
+        EngineApi.smas_set_environment(_handle, seuMultiplier, noiseMultiplier,
+                                       driftMultiplier, densityMultiplier);
+    }
 
     public void Dispose()
     {

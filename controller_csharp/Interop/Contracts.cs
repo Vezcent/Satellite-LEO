@@ -2,9 +2,9 @@
  * S-MAS Phase 4 — Interop/Contracts.cs
  * 
  * C# mirrors of the packed C++ structs from contracts.h.
- * MUST stay byte-identical to smas::StatePacket (184B) and smas::ActionPacket (19B).
+ * MUST stay byte-identical to smas::StatePacket and smas::ActionPacket.
  *
- * Layout verified against backend_cpp/include/contracts.h version 1.
+ * Layout verified against backend_cpp/include/contracts.h version 2.
  */
 using System.Runtime.InteropServices;
 
@@ -28,11 +28,12 @@ public enum FdirMode : byte
 
 public enum DoneReason : byte
 {
-    Ongoing       = 0,
-    BatteryDead   = 1,
-    TelemetryLoss = 2,
-    Reentry       = 3,
-    SeuFatal      = 4
+    Ongoing           = 0,
+    BatteryDead       = 1,
+    TelemetryLoss     = 2,
+    Reentry           = 3,
+    SeuFatal          = 4,
+    FuelDepletedLow   = 5
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -94,7 +95,15 @@ public struct StatePacket
     // ── SEU ──
     public byte   SeuActive;          // 183
 
-    // Total: 184 bytes
+    // ── Fuel (Phase A) ──
+    public float  FuelFraction;       // [0,1] remaining propellant
+    public byte   FuelDepleted;       // 0/1
+
+    // ── Thermal (Phase A) ──
+    public float  TempBus;            // °C
+    public float  TempBattery;        // °C
+    public float  TempPayload;        // °C
+    public byte   HeaterOn;           // 0/1
 
     /// <summary>Typed accessor for the FDIR mode.</summary>
     public readonly FdirMode FdirModeEnum => (FdirMode)FdirMode;
@@ -104,7 +113,7 @@ public struct StatePacket
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  ActionPacket — C# → C++ (19 bytes, version 1)
+//  ActionPacket — C# → C++ (20 bytes, version 1)
 // ═══════════════════════════════════════════════════════════════════
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -124,7 +133,10 @@ public struct ActionPacket
     // Mission Agent
     public byte  PayloadOn;   // 18
 
-    // Total: 19 bytes
+    // Ground Command (Developer Testbed)
+    public byte  InjectSeu;   // 19  — 1 = force SEU spike this step (one-shot)
+
+    // Total: 20 bytes
 
     /// <summary>Create a zeroed action with correct version.</summary>
     public static ActionPacket CreateNoOp()

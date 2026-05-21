@@ -37,7 +37,6 @@ class EnvConfig:
 class ObsConfig:
     """Observation space dimensions and normalisation."""
     # StatePacket fields selected for the observation vector
-    # (raw_dim will be computed automatically in observation.py)
     orbit_features: int = 7            # alt, lat, lon, |v|, vx_norm, vy_norm, vz_norm
     power_features: int = 4            # soc, capacity_frac, solar_w, draw_w
     env_features:   int = 5            # rho_log, flux10_log, flux30_log, eclipse, saa
@@ -45,15 +44,24 @@ class ObsConfig:
     fdir_features:  int = 4            # one-hot [NOM, DEG, SAFE, REC]
     degrad_features: int = 3           # panel_eff, cd_norm, cycles_norm
     seu_features:   int = 1            # seu_active
-    # look-ahead / look-back lag features (placeholder count)
+    # Phase A: new feature groups
+    fuel_features:  int = 2            # fuel_fraction, fuel_depleted
+    thermal_features: int = 4          # temp_bus, temp_battery, temp_payload, heater_on
+    target_alt_features: int = 1       # target_alt_norm
+    # look-ahead / look-back lag features
     lag_features: int = 4              # kp_3h, f107_3h, kp_6h, f107_6h
+    # Goal-conditioned altitude range (Phase A)
+    target_alt_min: float = 550.0      # km
+    target_alt_max: float = 750.0      # km
 
     @property
     def obs_dim(self) -> int:
         return (self.orbit_features + self.power_features +
                 self.env_features + self.comm_features +
                 self.fdir_features + self.degrad_features +
-                self.seu_features + self.lag_features)
+                self.seu_features + self.fuel_features +
+                self.thermal_features + self.target_alt_features +
+                self.lag_features)
 
 
 @dataclass
@@ -71,13 +79,17 @@ class ActionConfig:
 class RewardConfig:
     """Explicit reward weights (from pipeline doc §3.2.2)."""
     w_alive: float = 5.0               # reduced to prevent masking penalties
-    w_fuel:  float = 10.0              # HEAVILY increased to force the agent to learn how to coast
-    w_dod:   float = 30.0              # penalty for Depth of Discharge (increased for Phase 3)
+    w_fuel:  float = 10.0              # thrust penalty (scales with 1/remaining_fuel)
+    w_dod:   float = 30.0              # penalty for Depth of Discharge
     w_fdir:  float = 200.0             # penalty when FDIR intervenes
-    w_fatal: float = 50000.0           # HUGE penalty on terminal failure (Phase 3 survival)
-    w_alt:   float = 2.0                # Keep LOW — satellite naturally orbits ~578km, high w_alt causes massive negative reward
-    target_alt_km: float = 600.0       # nominal target altitude
-    alt_deadband_km: float = 25.0       # tolerance band — satellite naturally orbits 575-585km due to drag
+    w_fatal: float = 50000.0           # HUGE penalty on terminal failure
+    w_alt:   float = 2.0               # altitude maintenance penalty
+    alt_deadband_km: float = 25.0      # tolerance band
+    # Phase A: fuel conservation
+    w_fuel_critical: float = 500.0     # penalty when fuel < 10%
+    w_coast_bonus: float = 2.0         # bonus for coasting (throttle=0, fuel>0)
+    # Phase A: thermal management
+    w_thermal: float = 50.0            # penalty when T_battery outside [-10, 45]°C
 
 
 @dataclass
@@ -123,11 +135,11 @@ class MAPPOConfig:
 @dataclass
 class TrainConfig:
     """Top-level training run settings."""
-    total_timesteps: int = 500_000
+    total_timesteps: int = 1_000_000   # Phase A: increased for larger obs space
     log_interval: int = 10             # episodes between metric prints
     save_interval: int = 50            # episodes between checkpoint saves
     eval_episodes: int = 5
     checkpoint_dir: str = str(PROJECT_ROOT / "marl_python" / "checkpoints")
     log_dir: str = str(PROJECT_ROOT / "marl_python" / "logs")
     seed: int = 42
-    device: str = "cuda"                # "cpu" or "cuda"
+    device: str = "cpu"                # CPU is faster for small model (128x2 MLP)

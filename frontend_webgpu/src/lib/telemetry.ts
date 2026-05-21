@@ -41,6 +41,25 @@ export interface TelemetryData {
   fdirOverridden: boolean;
 }
 
+// ── Ground Command Interface (Frontend → C# Controller) ──────────
+export interface GroundCommand {
+  type: 'manual_override' | 'target_altitude' | 'inject_seu'
+      | 'force_fdir' | 'environment_tuning';
+  manualOverride?: boolean;
+  action?: {
+    thrustX: number; thrustY: number; thrustZ: number;
+    throttle: number; deepSleep: boolean; payloadOn: boolean;
+  };
+  targetAltitudeKm?: number;
+  fdirMode?: number;           // 0-3, or -1 for auto
+  environment?: {
+    seuMultiplier: number;     // 0.1x – 100x
+    noiseMultiplier: number;   // 0x – 5x
+    driftMultiplier: number;   // 0x – 10x
+    densityMultiplier: number; // 0.001 – 1.0
+  };
+}
+
 const RECONNECT_INTERVAL_MS = 2000;  // Retry every 2 seconds
 const MAX_RECONNECT_ATTEMPTS = 999;  // Keep trying indefinitely
 
@@ -164,5 +183,14 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
     };
   }, [connect]);
 
-  return { data, connected };
+  const sendCommand = useCallback((cmd: GroundCommand) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(cmd));
+      console.log('[Telemetry] Sent command:', cmd.type);
+    } else {
+      console.warn('[Telemetry] Cannot send command — not connected');
+    }
+  }, []);
+
+  return { data, connected, sendCommand };
 }

@@ -17,13 +17,14 @@ public:
     explicit SensorNoise(uint64_t seed = 42);
 
     // Inject Gaussian noise into position reading (metres).
-    Vec3 noisy_position(const Vec3& true_pos, double sigma_m = 50.0);
+    // scale: multiplier on sigma (1.0 = default, 0.0 = perfect, 5.0 = very noisy)
+    Vec3 noisy_position(const Vec3& true_pos, double sigma_m = 50.0, double scale = 1.0);
 
     // Inject Gaussian noise into velocity reading (m/s).
-    Vec3 noisy_velocity(const Vec3& true_vel, double sigma_ms = 0.5);
+    Vec3 noisy_velocity(const Vec3& true_vel, double sigma_ms = 0.5, double scale = 1.0);
 
     // Inject noise into power SoC reading (fractional).
-    double noisy_soc(double true_soc, double sigma = 0.01);
+    double noisy_soc(double true_soc, double sigma = 0.01, double scale = 1.0);
 
 private:
     std::mt19937_64 rng_;
@@ -38,7 +39,8 @@ public:
 
     // Returns true if a non-fatal SEU spike occurs this step.
     // Probability scales with SAA proton flux.
-    bool check_seu(float saa_flux_10mev);
+    // multiplier: 1.0 = default rate, 10.0 = 10x more likely.
+    bool check_seu(float saa_flux_10mev, double multiplier = 1.0);
 
     // Returns true if the SEU is fatal (extremely rare, but possible).
     bool is_fatal(float saa_flux_10mev);
@@ -81,7 +83,8 @@ public:
     void reset();
 
     // Advance one step: apply random walk to Cd and panel efficiency.
-    void step();
+    // rate_mult: 1.0 = default drift rate, 10.0 = 10x faster aging.
+    void step(double rate_mult = 1.0);
 
     void set_panel_efficiency(double eff);
 

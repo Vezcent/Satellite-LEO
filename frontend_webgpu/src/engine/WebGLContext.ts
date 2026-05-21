@@ -178,6 +178,19 @@ export class WebGLContext implements IRenderContext {
   private heatmapTex!: WebGLTexture;
   private currentEarthRotation = 0;
 
+  // ── Telemetry Trail (orbital path) ──
+  private trailBuffer: Float32Array = new Float32Array(200 * 3); // 200 positions x (x,y,z)
+  private trailCount = 0;
+  private trailHead = 0;
+  private trailVBO!: WebGLBuffer;
+  private trailVAO!: WebGLVertexArrayObject;
+
+  // ── Target Orbit Ring ──
+  private targetOrbitVAO!: WebGLVertexArrayObject;
+  private targetOrbitVBO!: WebGLBuffer;
+  private targetAltitudeKm = 600;
+  private static readonly ORBIT_SEGMENTS = 64;
+
   async init(canvas: HTMLCanvasElement): Promise<void> {
     const gl = canvas.getContext('webgl2', { antialias: true });
     if (!gl) throw new Error('WebGL2 not supported');
@@ -225,11 +238,55 @@ export class WebGLContext implements IRenderContext {
     // I'll just draw the sun using the Earth VAO or Sat VAO for now, 
     // but better to have a dedicated one. I'll stick to a simple approach.
 
+    // ── Trail VBO/VAO (dynamic line strip) ──
+    this.trailVBO = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.trailVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, this.trailBuffer, gl.DYNAMIC_DRAW);
+    this.trailVAO = gl.createVertexArray()!;
+    gl.bindVertexArray(this.trailVAO);
+    gl.enableVertexAttribArray(0); // aVertexPosition
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+
+    // ── Target Orbit Ring VBO/VAO ──
+    this.buildTargetOrbit(gl);
+
     this.loadHeatmap();
 
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+
+  /** Build a circle of ORBIT_SEGMENTS points at targetAltitudeKm in the XZ plane */
+  private buildTargetOrbit(gl: WebGL2RenderingContext) {
+    const r = 6371 + this.targetAltitudeKm;
+    const N = WebGLContext.ORBIT_SEGMENTS;
+    const verts = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const angle = (i / N) * 2 * Math.PI;
+      verts[i * 3]     = r * Math.cos(angle); // x
+      verts[i * 3 + 1] = 0;                    // y (equatorial plane)
+      verts[i * 3 + 2] = r * Math.sin(angle); // z
+    }
+    if (!this.targetOrbitVBO) {
+      this.targetOrbitVBO = gl.createBuffer()!;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.targetOrbitVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+    if (!this.targetOrbitVAO) {
+      this.targetOrbitVAO = gl.createVertexArray()!;
+    }
+    gl.bindVertexArray(this.targetOrbitVAO);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+  }
+
+  /** Update target altitude and rebuild orbit ring geometry */
+  setTargetAltitude(altKm: number) {
+    this.targetAltitudeKm = altKm;
+    if (this.gl) this.buildTargetOrbit(this.gl);
   }
 
   private loadHeatmap(): void {
@@ -330,6 +387,19 @@ export class WebGLContext implements IRenderContext {
     else { vec3.set(this.satColor, 0.2, 0.5, 1.0); }
 
     this.currentAtmDensity = data.atmDensity;
+
+    // Update trail ring buffer
+    const idx = this.trailHead * 3;
+    this.trailBuffer[idx] = this.satPosition[0];
+    this.trailBuffer[idx + 1] = this.satPosition[1];
+    this.trailBuffer[idx + 2] = this.satPosition[2];
+    this.trailHead = (this.trailHead + 1) % 200;
+    if (this.trailCount < 200) this.trailCount++;
+
+    // Upload trail data
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.trailVBO);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.trailBuffer);
   }
 
   render(time: number): void {
@@ -432,6 +502,35 @@ export class WebGLContext implements IRenderContext {
     gl.drawElements(gl.TRIANGLES, this.numSatIndices, gl.UNSIGNED_SHORT, 0);
     gl.enable(gl.DEPTH_TEST);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    // 4. Telemetry Trail
+    if (this.trailCount > 1) {
+      const identityMV = mat4.clone(this.viewMatrix);
+      gl.uniformMatrix4fv(this.uModelView, false, identityMV);
+      gl.uniform1f(this.uIsEarth, 0.0);
+      gl.uniform3f(this.uColor, 0.0, 0.8, 1.0); // Cyan trail
+      gl.bindVertexArray(this.trailVAO);
+      // Draw from head backwards for correct ordering
+      if (this.trailCount < 200) {
+        gl.drawArrays(gl.LINE_STRIP, 0, this.trailCount);
+      } else {
+        // Two segments: [head..199] and [0..head-1]
+        gl.drawArrays(gl.LINE_STRIP, this.trailHead, 200 - this.trailHead);
+        gl.drawArrays(gl.LINE_STRIP, 0, this.trailHead);
+      }
+    }
+
+    // 5. Target Orbit Ring
+    {
+      const identityMV = mat4.clone(this.viewMatrix);
+      gl.uniformMatrix4fv(this.uModelView, false, identityMV);
+      gl.uniform1f(this.uIsEarth, 0.0);
+      gl.uniform3f(this.uColor, 0.0, 0.78, 1.0); // Cyan
+      gl.enable(gl.BLEND);
+      gl.bindVertexArray(this.targetOrbitVAO);
+      gl.drawArrays(gl.LINE_LOOP, 0, WebGLContext.ORBIT_SEGMENTS);
+      gl.disable(gl.BLEND);
+    }
   }
 
   dispose(): void {}

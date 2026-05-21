@@ -15,7 +15,7 @@ namespace smas {
 // ── State Packet ──────────────────────────────────────────────────
 // Direction: C++ → C# / Python
 struct StatePacket {
-    uint8_t version = 1;
+    uint8_t version = 2;
 
     // ── Time ──
     double  sim_time_s;           // total elapsed seconds
@@ -62,6 +62,16 @@ struct StatePacket {
 
     // ── SEU ──
     uint8_t seu_active;           // 0 / 1
+
+    // ── Fuel (Phase A) ──
+    float   fuel_fraction;        // [0,1] remaining propellant
+    uint8_t fuel_depleted;        // 0 / 1
+
+    // ── Thermal (Phase A) ──
+    float   temp_bus;             // °C
+    float   temp_battery;         // °C
+    float   temp_payload;         // °C
+    uint8_t heater_on;            // 0 / 1
 };
 
 // ── Action Packet ─────────────────────────────────────────────────
@@ -80,6 +90,9 @@ struct ActionPacket {
 
     // Mission Agent
     uint8_t payload_on;   // 0 / 1
+
+    // Ground Command (Developer Testbed)
+    uint8_t inject_seu;   // 1 = force SEU spike this step (one-shot)
 };
 
 #pragma pack(pop)
@@ -94,11 +107,12 @@ enum class FDIRMode : uint8_t {
 
 // ── Done reasons ──────────────────────────────────────────────────
 enum class DoneReason : uint8_t {
-    ONGOING       = 0,
-    BATTERY_DEAD  = 1,
-    TELEMETRY_LOSS = 2,
-    REENTRY       = 3,
-    SEU_FATAL     = 4
+    ONGOING            = 0,
+    BATTERY_DEAD       = 1,
+    TELEMETRY_LOSS     = 2,
+    REENTRY            = 3,
+    SEU_FATAL          = 4,
+    FUEL_DEPLETED_LOW  = 5   // out of fuel + altitude < 400 km
 };
 
 } // namespace smas

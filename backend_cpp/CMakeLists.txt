@@ -20,6 +20,7 @@ set(ENGINE_SOURCES
     src/orbital_mechanics.cpp
     src/satellite_bus.cpp
     src/stochastic.cpp
+    src/thermal.cpp
     src/simulation_engine.cpp
     src/c_api.cpp
 )

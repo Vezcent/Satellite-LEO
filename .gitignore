@@ -35,3 +35,17 @@ backend_cpp/build/
 # Music files (keep folder, ignore contents)
 /music/*
 !/music/.gitkeep
+
+# .NET / C# build artifacts
+[Bb]in/
+[Oo]bj/
+*.suo
+*.user
+*.sln.docstates
+
+# Secrets & Env
+.env
+.env.*
+secrets.json
+*.key
+/keys/

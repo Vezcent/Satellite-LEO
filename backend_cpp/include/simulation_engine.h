@@ -12,6 +12,7 @@
 #include "orbital_mechanics.h"
 #include "satellite_bus.h"
 #include "stochastic.h"
+#include "thermal.h"
 #include <string>
 
 namespace smas {
@@ -38,6 +39,16 @@ public:
     void  set_degradation(double capacity_j, double panel_eff); // Age the satellite
     StatePacket step(const ActionPacket& action); // Advance one dt
 
+    // ── Runtime Environment Tuning (Developer Testbed) ───────────
+    void set_environment(double seu_multiplier,
+                         double noise_multiplier,
+                         double drift_rate_multiplier,
+                         double density_multiplier);
+
+    // Set target altitude for goal-conditioned training (Phase A)
+    void set_target_altitude(double alt_km) { target_altitude_km_ = alt_km; }
+    double target_altitude_km() const { return target_altitude_km_; }
+
     // ── Accessors ─────────────────────────────────────────────────
     const StatePacket& current_state() const { return state_; }
     double sim_time()                  const { return orbit_.time; }
@@ -56,6 +67,7 @@ private:
     NRLMSISEModel     atmosphere_;
     OrbitalState      orbit_;
     SatelliteBus      bus_;
+    ThermalModel      thermal_;
 
     // ── Stochastic ──
     SensorNoise       sensor_noise_;
@@ -63,11 +75,17 @@ private:
     ActuatorModel     actuator_;
     ModelDrift         drift_;
 
+    // ── Runtime environment multipliers ──
+    double seu_multiplier_   = 1.0;
+    double noise_multiplier_ = 1.0;
+    double drift_multiplier_ = 1.0;
+
     // ── State tracking ──
     StatePacket       state_;
     SimTime           sim_time_struct_;
     double            time_since_contact_;
     FDIRMode          fdir_mode_;
+    double            target_altitude_km_ = 600.0;
 
     // ── Internal helpers ──
     void update_time();

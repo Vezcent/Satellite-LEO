@@ -26,6 +26,7 @@
  *   --test       Run integration tests then exit
  */
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using SmasController.AI;
 using SmasController.Governor;
 using SmasController.Interop;
@@ -88,12 +89,14 @@ public static class Program
         // ── 4. WebSocket Server (optional) ───────────────────────
         WebSocketServer? wsServer = null;
         NetworkImpairment? impairment = null;
+        var groundCmd = new GroundCommandState();
         if (!config.NoWebSocket)
         {
             impairment = new NetworkImpairment(
                 minDelayMs: 100, maxDelayMs: 500,   // reduced for sim speed
                 dropProbability: 0.02, seed: (int)config.Seed);
             wsServer = new WebSocketServer(config.Port, impairment);
+            wsServer.OnCommandReceived += json => ParseGroundCommand(json, groundCmd);
             wsServer.Start();
         }
 
@@ -104,10 +107,10 @@ public static class Program
         Console.WriteLine("  ────────────────────────────────────────────────────────");
 
         var state = new StatePacket();
-        var action = ActionPacket.CreateNoOp();
+        var initAction = ActionPacket.CreateNoOp();
 
         // Initial step to get state
-        engine.Step(ref action, ref state);
+        engine.Step(ref initAction, ref state);
 
         int step = 0;
         int fdirOverrides = 0;
@@ -121,18 +124,74 @@ public static class Program
             // a. Build normalised observation
             float[] obs = obsBuilder.Build(in state);
 
-            // b. Run ONNX inference
-            AgentActions aiActions = inference.Infer(obs);
+            // b. Run ONNX inference (or use manual override)
+            ActionPacket action;
+            bool overridden;
 
-            // c. Apply FDIR Governor overrides
-            action = governor.Apply(aiActions, in state, out bool overridden);
+            if (groundCmd.ManualOverride)
+            {
+                action = groundCmd.ManualAction;
+                action.Version = 1;
+                overridden = true;
+            }
+            else
+            {
+                AgentActions aiActions = inference.Infer(obs);
+                action = governor.Apply(aiActions, in state, out overridden);
+            }
             if (overridden) fdirOverrides++;
+
+            // c. Apply ground command overrides
+            if (groundCmd.InjectSeu)
+            {
+                action.InjectSeu = 1;
+                groundCmd.InjectSeu = false; // one-shot
+            }
+
+            // c2. Altitude hold correction — P-controller overlay on AI thrust
+            //     AI was trained for 600km, so we add a radial correction
+            //     when ground station sets a different target altitude.
+            if (!groundCmd.ManualOverride && Math.Abs(groundCmd.TargetAltitudeKm - 600.0) > 1.0)
+            {
+                double altError = groundCmd.TargetAltitudeKm - state.AltitudeKm; // km
+                // Proportional gain: 0.005 thrust per km error, clamped to ±0.5
+                float correction = (float)Math.Clamp(altError * 0.005, -0.5, 0.5);
+
+                // Apply radial boost via Z-thrust (+ = raise orbit, - = lower orbit)
+                action.ThrustZ = Math.Clamp(action.ThrustZ + correction, -1f, 1f);
+
+                // Increase throttle proportionally to error magnitude
+                float throttleBoost = (float)Math.Min(Math.Abs(altError) * 0.002, 0.3);
+                action.Throttle = Math.Clamp(action.Throttle + throttleBoost, 0f, 1f);
+            }
+
+            if (groundCmd.ForcedFdirMode.HasValue)
+            {
+                // Will be applied after step by overwriting state.FdirMode
+            }
+
+            if (groundCmd.EnvironmentDirty)
+            {
+                engine.SetEnvironment(
+                    groundCmd.SeuMultiplier,
+                    groundCmd.NoiseMultiplier,
+                    groundCmd.DriftMultiplier,
+                    groundCmd.DensityMultiplier);
+                groundCmd.EnvironmentDirty = false;
+                Console.WriteLine($"  [ENV] Applied: SEU={groundCmd.SeuMultiplier}x " +
+                    $"Noise={groundCmd.NoiseMultiplier}x Drift={groundCmd.DriftMultiplier}x " +
+                    $"Density={groundCmd.DensityMultiplier}");
+            }
 
             // d. Step the engine
             engine.Step(ref action, ref state);
             step++;
 
-            // e. Track metrics
+            // e. Apply forced FDIR mode (after step, before broadcast)
+            if (groundCmd.ForcedFdirMode.HasValue)
+                state.FdirMode = (byte)groundCmd.ForcedFdirMode.Value;
+
+            // f. Track metrics
             if (action.PayloadOn == 1) payloadOnSteps++;
             if (state.InEclipse == 1) eclipseSteps++;
             if (state.InSaa == 1) saaSteps++;
@@ -143,7 +202,12 @@ public static class Program
             if (isBroadcastStep)
             {
                 // Log telemetry
-                logger.LogStep(step, in state, in action, overridden);
+                logger.LogStep(step, in state, in action, overridden,
+                    manualOverride: groundCmd.ManualOverride,
+                    seuMult: groundCmd.SeuMultiplier,
+                    noiseMult: groundCmd.NoiseMultiplier,
+                    driftMult: groundCmd.DriftMultiplier,
+                    densityMult: groundCmd.DensityMultiplier);
 
                 // Broadcast via WebSocket
                 if (wsServer != null)
@@ -248,7 +312,7 @@ public static class Program
             int csState = Marshal.SizeOf<StatePacket>();
             int csAction = Marshal.SizeOf<ActionPacket>();
             Assert(csState == 184, $"StatePacket size: expected 184, got {csState}");
-            Assert(csAction == 19, $"ActionPacket size: expected 19, got {csAction}");
+            Assert(csAction == 20, $"ActionPacket size: expected 20, got {csAction}");
             Pass(1, "ABI struct sizes", $"State={csState}B, Action={csAction}B");
             passed++;
         }
@@ -509,5 +573,95 @@ public static class Program
     private static void Fail(int num, string name, string detail)
     {
         Console.WriteLine($"  [{num,2}] ✗ {name,-35} {detail}");
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    //  GROUND COMMAND STATE & PARSING
+    // ═════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Mutable state tracking ground commands from the WebGPU Developer Testbed.
+    /// Thread-safe for simple field writes from WebSocket callbacks.
+    /// </summary>
+    private class GroundCommandState
+    {
+        // ── Manual Control ──
+        public volatile bool ManualOverride;
+        public ActionPacket ManualAction = ActionPacket.CreateNoOp();
+        public double TargetAltitudeKm = 600.0;
+        public volatile bool InjectSeu;
+        public int? ForcedFdirMode;
+
+        // ── Environment Tuning ──
+        public double SeuMultiplier = 1.0;
+        public double NoiseMultiplier = 1.0;
+        public double DriftMultiplier = 1.0;
+        public double DensityMultiplier = 0.01;
+        public volatile bool EnvironmentDirty;
+    }
+
+    private static void ParseGroundCommand(string json, GroundCommandState cmd)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            string type = root.GetProperty("type").GetString() ?? "";
+
+            switch (type)
+            {
+                case "manual_override":
+                    cmd.ManualOverride = root.GetProperty("manualOverride").GetBoolean();
+                    if (cmd.ManualOverride && root.TryGetProperty("action", out var act))
+                    {
+                        cmd.ManualAction = new ActionPacket
+                        {
+                            Version = 1,
+                            ThrustX = (float)act.GetProperty("thrustX").GetDouble(),
+                            ThrustY = (float)act.GetProperty("thrustY").GetDouble(),
+                            ThrustZ = (float)act.GetProperty("thrustZ").GetDouble(),
+                            Throttle = (float)act.GetProperty("throttle").GetDouble(),
+                            DeepSleep = (byte)(act.GetProperty("deepSleep").GetBoolean() ? 1 : 0),
+                            PayloadOn = (byte)(act.GetProperty("payloadOn").GetBoolean() ? 1 : 0),
+                        };
+                    }
+                    Console.WriteLine($"  [CMD] Manual override: {cmd.ManualOverride}");
+                    break;
+
+                case "target_altitude":
+                    cmd.TargetAltitudeKm = root.GetProperty("targetAltitudeKm").GetDouble();
+                    Console.WriteLine($"  [CMD] Target altitude: {cmd.TargetAltitudeKm} km");
+                    break;
+
+                case "inject_seu":
+                    cmd.InjectSeu = true;
+                    Console.WriteLine("  [CMD] SEU injection triggered");
+                    break;
+
+                case "force_fdir":
+                    int mode = root.GetProperty("fdirMode").GetInt32();
+                    cmd.ForcedFdirMode = mode < 0 ? null : mode;
+                    Console.WriteLine($"  [CMD] Force FDIR: {(cmd.ForcedFdirMode.HasValue ? ((FdirMode)cmd.ForcedFdirMode.Value).ToString() : "Auto")}");
+                    break;
+
+                case "environment_tuning":
+                    var env = root.GetProperty("environment");
+                    cmd.SeuMultiplier = env.GetProperty("seuMultiplier").GetDouble();
+                    cmd.NoiseMultiplier = env.GetProperty("noiseMultiplier").GetDouble();
+                    cmd.DriftMultiplier = env.GetProperty("driftMultiplier").GetDouble();
+                    cmd.DensityMultiplier = env.GetProperty("densityMultiplier").GetDouble();
+                    cmd.EnvironmentDirty = true;
+                    Console.WriteLine($"  [CMD] Environment: SEU={cmd.SeuMultiplier}x Noise={cmd.NoiseMultiplier}x Drift={cmd.DriftMultiplier}x Density={cmd.DensityMultiplier}");
+                    break;
+
+                default:
+                    Console.WriteLine($"  [CMD] Unknown command type: {type}");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  [CMD] Parse error: {ex.Message}");
+        }
     }
 }

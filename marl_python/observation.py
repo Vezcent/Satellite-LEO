@@ -58,8 +58,9 @@ class ObservationBuilder:
     Converts a raw StatePacket into a normalised numpy vector.
 
     The observation order is deterministic and documented:
-      [orbit(6) | power(4) | env(5) | comm(2) | fdir(4) | degrad(3) | seu(1) | lag(4)]
-    Total = obs_dim (from ObsConfig, default 29).
+      [orbit(7) | power(4) | env(5) | comm(2) | fdir(4) | degrad(3) | seu(1)
+       | fuel(2) | thermal(4) | target_alt(1) | lag(4)]
+    Total = obs_dim (from ObsConfig, default 37).
     """
 
     def __init__(self, cfg: Optional[ObsConfig] = None):
@@ -71,7 +72,8 @@ class ObservationBuilder:
         return self.cfg.obs_dim
 
     def build(self, s: StatePacket,
-              weather_lag: Optional[dict] = None) -> np.ndarray:
+              weather_lag: Optional[dict] = None,
+              target_alt_km: float = 600.0) -> np.ndarray:
         """
         Build a flat observation vector from a StatePacket.
 
@@ -79,6 +81,7 @@ class ObservationBuilder:
         ----------
         s : StatePacket   — raw state from C++ engine
         weather_lag : dict (optional) — pre-computed lag features
+        target_alt_km : float — goal altitude for this episode (Phase A)
 
         Returns
         -------
@@ -86,8 +89,8 @@ class ObservationBuilder:
         """
         obs = []
 
-        # ── 1. Orbit features (6) ─────────────────────────────────
-        obs.append(_minmax(s.altitude_km, 200.0, 700.0))
+        # ── 1. Orbit features (7) ─────────────────────────────────
+        obs.append(_minmax(s.altitude_km, 200.0, 800.0))
         obs.append(_minmax(s.latitude_deg, -90.0, 90.0))
         obs.append(_minmax(s.longitude_deg, -180.0, 180.0))
         # velocity magnitude (m/s) — ~7600 at 600 km
@@ -133,9 +136,25 @@ class ObservationBuilder:
         # ── 7. SEU (1) ────────────────────────────────────────────
         obs.append(float(s.seu_active))
 
-        # ── 8. Lag features (4) — simplified placeholders ─────────
-        # In full implementation, these come from a sliding window
-        # of space weather records.  For now, use zeros.
+        # ── 8. Fuel features (2) — Phase A ────────────────────────
+        obs.append(float(getattr(s, 'fuel_fraction', 1.0)))   # [0,1]
+        obs.append(float(getattr(s, 'fuel_depleted', 0)))     # 0/1
+
+        # ── 9. Thermal features (4) — Phase A ─────────────────────
+        obs.append(_minmax(float(getattr(s, 'temp_bus', 20.0)),
+                           -40.0, 60.0))
+        obs.append(_minmax(float(getattr(s, 'temp_battery', 20.0)),
+                           -40.0, 60.0))
+        obs.append(_minmax(float(getattr(s, 'temp_payload', 20.0)),
+                           -40.0, 60.0))
+        obs.append(float(getattr(s, 'heater_on', 0)))         # 0/1
+
+        # ── 10. Target altitude (1) — Phase A (goal-conditioned) ──
+        obs.append(_minmax(target_alt_km,
+                           self.cfg.target_alt_min,
+                           self.cfg.target_alt_max))
+
+        # ── 11. Lag features (4) — weather look-back ──────────────
         if weather_lag:
             obs.append(_minmax(weather_lag.get("kp_3h", 0), 0, 9))
             obs.append(_minmax(weather_lag.get("f107_3h", 0), 50, 300))
@@ -145,3 +164,4 @@ class ObservationBuilder:
             obs.extend([0.0, 0.0, 0.0, 0.0])
 
         return np.array(obs, dtype=np.float32)
+

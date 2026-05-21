@@ -16,20 +16,22 @@ namespace smas {
 
 SensorNoise::SensorNoise(uint64_t seed) : rng_(seed) {}
 
-Vec3 SensorNoise::noisy_position(const Vec3& true_pos, double sigma_m) {
-    return {true_pos.x + sigma_m * sample(),
-            true_pos.y + sigma_m * sample(),
-            true_pos.z + sigma_m * sample()};
+Vec3 SensorNoise::noisy_position(const Vec3& true_pos, double sigma_m, double scale) {
+    double s = sigma_m * scale;
+    return {true_pos.x + s * sample(),
+            true_pos.y + s * sample(),
+            true_pos.z + s * sample()};
 }
 
-Vec3 SensorNoise::noisy_velocity(const Vec3& true_vel, double sigma_ms) {
-    return {true_vel.x + sigma_ms * sample(),
-            true_vel.y + sigma_ms * sample(),
-            true_vel.z + sigma_ms * sample()};
+Vec3 SensorNoise::noisy_velocity(const Vec3& true_vel, double sigma_ms, double scale) {
+    double s = sigma_ms * scale;
+    return {true_vel.x + s * sample(),
+            true_vel.y + s * sample(),
+            true_vel.z + s * sample()};
 }
 
-double SensorNoise::noisy_soc(double true_soc, double sigma) {
-    return smas::compat::clamp(true_soc + sigma * sample(), 0.0, 1.0);
+double SensorNoise::noisy_soc(double true_soc, double sigma, double scale) {
+    return smas::compat::clamp(true_soc + sigma * scale * sample(), 0.0, 1.0);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -38,8 +40,8 @@ double SensorNoise::noisy_soc(double true_soc, double sigma) {
 
 SEUGenerator::SEUGenerator(uint64_t seed) : rng_(seed) {}
 
-bool SEUGenerator::check_seu(float saa_flux_10mev) {
-    double prob = constants::SEU_BASE_PROB;
+bool SEUGenerator::check_seu(float saa_flux_10mev, double multiplier) {
+    double prob = constants::SEU_BASE_PROB * multiplier;
     if (saa_flux_10mev > constants::SAA_FLUX_THRESHOLD) {
         // Scale probability with flux intensity
         prob *= constants::SEU_SAA_MULT * (saa_flux_10mev / 1000.0);
@@ -99,6 +101,7 @@ ActionPacket ActuatorModel::dequeue() {
     noop.version = 1;
     noop.thrust_x = 0; noop.thrust_y = 0; noop.thrust_z = 0;
     noop.throttle = 0; noop.deep_sleep = 0; noop.payload_on = 0;
+    noop.inject_seu = 0;
 
     if (queue_.empty()) return noop;
 
@@ -133,14 +136,14 @@ void ModelDrift::reset() {
     panel_eff_ = 1.0;
 }
 
-void ModelDrift::step() {
-    // Random walk: value += N(0, σ)
-    cd_ += constants::CD_DRIFT_SIGMA * gauss_(rng_);
+void ModelDrift::step(double rate_mult) {
+    // Random walk: value += N(0, σ) * rate_mult
+    cd_ += constants::CD_DRIFT_SIGMA * rate_mult * gauss_(rng_);
     cd_ = smas::compat::clamp(cd_, 1.5, 3.0); // physically plausible range
 
-    panel_eff_ += constants::PANEL_DRIFT_SIGMA * gauss_(rng_);
+    panel_eff_ += constants::PANEL_DRIFT_SIGMA * rate_mult * gauss_(rng_);
     // Also apply slow secular degradation from radiation
-    panel_eff_ -= 2e-9; // per-step trend (~1.5%/year, realistic for GaAs in LEO)
+    panel_eff_ -= 2e-9 * rate_mult; // per-step trend (~1.5%/year × rate_mult)
     panel_eff_ = smas::compat::clamp(panel_eff_, 0.3, 1.0);
 }
 

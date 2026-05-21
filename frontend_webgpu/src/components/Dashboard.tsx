@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useTelemetry, FdirMode } from '../lib/telemetry';
 import { Activity, Battery, ShieldAlert, Cpu, Radio, Orbit, ThermometerSun, Clock, Skull } from 'lucide-react';
 import Renderer from '../engine/Renderer';
+import GroundControlPanel from './GroundControlPanel';
 import MusicPlayer from './MusicPlayer';
 import '../App.css';
 
@@ -23,7 +24,7 @@ function formatLifetime(totalSeconds: number): string {
 }
 
 export default function Dashboard() {
-  const { data, connected } = useTelemetry();
+  const { data, connected, sendCommand } = useTelemetry();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Renderer | null>(null);
 
@@ -203,6 +204,7 @@ export default function Dashboard() {
 
         </div>
       </div>
+      <GroundControlPanel sendCommand={sendCommand} connected={connected} />
       <MusicPlayer />
     </>
   );

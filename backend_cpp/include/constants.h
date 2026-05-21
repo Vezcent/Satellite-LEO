@@ -27,6 +27,12 @@ constexpr double SAT_PAYLOAD_POWER_W = 25.0;        // CHRIS instrument draw
 constexpr double SAT_BUS_POWER_W     = 30.0;        // bus baseline
 constexpr double SAT_SLEEP_POWER_W   = 5.0;         // deep-sleep minimum
 
+// ── Propulsion ─────────────────────────────────────────────────────
+constexpr double SAT_FUEL_KG         = 5.6;         // PROBA-1 hydrazine (kg)
+constexpr double THRUSTER_ISP_S      = 220.0;       // Monoprop specific impulse (s)
+constexpr double G0                  = 9.80665;     // Standard gravity (m/s²)
+constexpr double FUEL_CRITICAL_KG    = 0.1;         // Emergency threshold (kg)
+
 // ── Orbital ────────────────────────────────────────────────────────
 constexpr double NOMINAL_ALT_KM      = 600.0;
 constexpr double REENTRY_ALT_KM      = 200.0;
@@ -51,6 +57,19 @@ constexpr int    ACT_DELAY_MAX    = 3;
 // ── Battery Degradation (Arrhenius-inspired) ──────────────────────
 constexpr double BATT_CYCLE_DEGRAD  = 0.00002;  // capacity loss / cycle (calibrated for 20yr LEO life)
 constexpr double BATT_THERMAL_FACT  = 0.00005;   // thermal acceleration (reduced from 0.001 — old value killed battery in 1.7yr)
+
+// ── Thermal Model ─────────────────────────────────────────────────
+constexpr double SOLAR_FLUX_W_M2    = 1361.0;   // Solar constant at 1 AU
+constexpr double SAT_ABSORPTIVITY   = 0.3;      // Solar absorptivity
+constexpr double SAT_EMISSIVITY     = 0.8;      // IR emissivity
+constexpr double SAT_RADIATOR_AREA  = 0.25;     // m² radiator area
+constexpr double SAT_THERMAL_MASS   = 50.0;     // kg effective thermal mass
+constexpr double SAT_SPECIFIC_HEAT  = 900.0;    // J/(kg·K) aluminum
+constexpr double HEATER_POWER_W     = 7.0;      // Battery heater draw
+constexpr double HEATER_ON_TEMP_C   = -5.0;     // Turn heater on below this
+constexpr double STEFAN_BOLTZMANN   = 5.670374419e-8; // W/(m²·K⁴)
+constexpr double SPACE_TEMP_K       = 2.7;      // Cosmic background
+constexpr double EARTH_ALBEDO       = 0.3;      // Average Earth albedo
 
 // ── SEU Parameters ────────────────────────────────────────────────
 constexpr double SEU_BASE_PROB     = 0.001;

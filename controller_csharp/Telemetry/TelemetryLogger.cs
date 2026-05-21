@@ -43,11 +43,16 @@ public sealed class TelemetryLogger : IDisposable
             "in_eclipse,in_saa,fdir_mode,seu_active," +
             "gs_visible,panel_eff,drag_coeff," +
             "thrust_x,thrust_y,thrust_z,throttle,deep_sleep,payload_on," +
-            "fdir_overridden,is_done,done_reason");
+            "fdir_overridden,is_done,done_reason," +
+            "atm_density,battery_capacity_j,charge_cycles," +
+            "manual_override,seu_mult,noise_mult,drift_mult,density_mult");
     }
 
     /// <summary>Log a single simulation step.</summary>
-    public void LogStep(int step, in StatePacket state, in ActionPacket action, bool fdirOverridden)
+    public void LogStep(int step, in StatePacket state, in ActionPacket action, bool fdirOverridden,
+                        bool manualOverride = false,
+                        double seuMult = 1.0, double noiseMult = 1.0,
+                        double driftMult = 1.0, double densityMult = 0.01)
     {
         _writer.Write(step);
         _writer.Write(','); _writer.Write(state.SimTimeS);
@@ -73,6 +78,15 @@ public sealed class TelemetryLogger : IDisposable
         _writer.Write(','); _writer.Write(fdirOverridden ? 1 : 0);
         _writer.Write(','); _writer.Write(state.IsDone);
         _writer.Write(','); _writer.Write(state.DoneReasonVal);
+        // New columns for degradation analysis & environment config
+        _writer.Write(','); _writer.Write(state.AtmDensity);
+        _writer.Write(','); _writer.Write(state.BatteryCapacityJ);
+        _writer.Write(','); _writer.Write(state.ChargeCycles);
+        _writer.Write(','); _writer.Write(manualOverride ? 1 : 0);
+        _writer.Write(','); _writer.Write(seuMult);
+        _writer.Write(','); _writer.Write(noiseMult);
+        _writer.Write(','); _writer.Write(driftMult);
+        _writer.Write(','); _writer.Write(densityMult);
         _writer.WriteLine();
     }
 

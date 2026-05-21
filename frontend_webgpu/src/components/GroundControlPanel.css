@@ -1,0 +1,394 @@
+/*
+ * S-MAS — Ground Control Panel Styles
+ * Glassmorphism floating panel with premium dark theme
+ */
+
+/* ── Toggle Button (collapsed state) ── */
+.gcp-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(100, 200, 255, 0.25);
+  border-radius: 8px;
+  color: #e2e8f0;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: all 0.2s ease;
+}
+
+.gcp-toggle:hover {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: rgba(100, 200, 255, 0.5);
+  box-shadow: 0 0 20px rgba(100, 200, 255, 0.15);
+}
+
+/* ── Panel Container ── */
+.gcp-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  width: 300px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  background: rgba(10, 18, 35, 0.88);
+  border: 1px solid rgba(100, 200, 255, 0.18);
+  border-radius: 12px;
+  backdrop-filter: blur(16px);
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  font-family: 'Inter', 'SF Pro', -apple-system, sans-serif;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+/* Scrollbar */
+.gcp-panel::-webkit-scrollbar { width: 4px; }
+.gcp-panel::-webkit-scrollbar-track { background: transparent; }
+.gcp-panel::-webkit-scrollbar-thumb { 
+  background: rgba(100, 200, 255, 0.2); 
+  border-radius: 4px; 
+}
+
+/* ── Header ── */
+.gcp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(100, 200, 255, 0.1);
+}
+
+.gcp-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: 0.3px;
+}
+
+.gcp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gcp-status {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.gcp-status.online { color: #34d399; }
+.gcp-status.offline { color: #f87171; }
+
+.gcp-close {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.gcp-close:hover { color: #f87171; }
+
+/* ── Tabs ── */
+.gcp-tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(100, 200, 255, 0.1);
+}
+
+.gcp-tab {
+  flex: 1;
+  padding: 10px 8px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.gcp-tab:hover {
+  color: #94a3b8;
+  background: rgba(100, 200, 255, 0.04);
+}
+
+.gcp-tab.active {
+  color: #38bdf8;
+  border-bottom-color: #38bdf8;
+}
+
+/* ── Body ── */
+.gcp-body {
+  padding: 8px;
+}
+
+/* ── Section ── */
+.gcp-section {
+  padding: 8px;
+  margin-bottom: 2px;
+}
+
+/* ── Toggle Label ── */
+.gcp-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.gcp-toggle-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #f59e0b;
+}
+
+.gcp-toggle-text {
+  font-weight: 600;
+  font-size: 13px;
+  color: #94a3b8;
+  transition: color 0.2s;
+}
+
+.gcp-toggle-text.active {
+  color: #f59e0b;
+}
+
+/* ── Slider Group ── */
+.gcp-slider-group {
+  margin-bottom: 6px;
+}
+
+.gcp-slider-group label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.gcp-val {
+  color: #38bdf8;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 11px;
+}
+
+.gcp-slider-group input[type="range"] {
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  background: rgba(100, 200, 255, 0.12);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.gcp-slider-group input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: 2px solid rgba(10, 18, 35, 0.8);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+
+.gcp-slider-group input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.6);
+}
+
+/* ── Toggle Row (checkboxes) ── */
+.gcp-toggle-row {
+  display: flex;
+  gap: 16px;
+  padding: 6px 0;
+}
+
+.gcp-toggle-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.gcp-toggle-row input[type="checkbox"] {
+  accent-color: #38bdf8;
+}
+
+/* ── Select ── */
+.gcp-select {
+  width: 100%;
+  padding: 6px 10px;
+  margin-top: 4px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(100, 200, 255, 0.15);
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.gcp-select:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}
+
+/* ── Buttons ── */
+.gcp-btn {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.3px;
+}
+
+.gcp-btn-danger {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  color: white;
+}
+
+.gcp-btn-danger:hover {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.35);
+}
+
+.gcp-btn-apply {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: white;
+}
+
+.gcp-btn-apply:hover {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35);
+}
+
+/* ── Presets ── */
+.gcp-presets {
+  display: flex;
+  gap: 6px;
+}
+
+.gcp-btn-preset {
+  flex: 1;
+  padding: 6px 4px;
+  font-size: 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(100, 200, 255, 0.15);
+}
+
+.gcp-preset-nom {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+.gcp-preset-nom:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+
+.gcp-preset-storm {
+  background: rgba(250, 204, 21, 0.12);
+  color: #fbbf24;
+}
+.gcp-preset-storm:hover {
+  background: rgba(250, 204, 21, 0.22);
+}
+
+.gcp-preset-worst {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+.gcp-preset-worst:hover {
+  background: rgba(239, 68, 68, 0.22);
+}
+
+/* ── Manual Controls (animation) ── */
+.gcp-manual-controls {
+  animation: gcpSlideIn 0.2s ease-out;
+}
+
+@keyframes gcpSlideIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Environment Status Badge ── */
+.gcp-env-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  transition: all 0.3s ease;
+}
+
+.gcp-env-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.gcp-env-ok {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+.gcp-env-ok .gcp-env-dot { background: #4ade80; }
+
+.gcp-env-warn {
+  background: rgba(250, 204, 21, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(250, 204, 21, 0.25);
+}
+.gcp-env-warn .gcp-env-dot { 
+  background: #fbbf24; 
+  animation: gcpPulse 1.5s infinite;
+}
+
+.gcp-env-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.gcp-env-danger .gcp-env-dot { 
+  background: #f87171; 
+  animation: gcpPulse 0.8s infinite;
+}
+
+.gcp-env-flash {
+  background: rgba(34, 197, 94, 0.25) !important;
+  color: #4ade80 !important;
+  border-color: rgba(34, 197, 94, 0.5) !important;
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.3);
+}
+
+@keyframes gcpPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+

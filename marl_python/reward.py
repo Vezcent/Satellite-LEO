@@ -50,7 +50,7 @@ class SurvivalReward:
         state  : StatePacket from the C++ engine (post-step)
         action : dict with "nav" (np.array shape 4) and "bus" (int)
         done   : bool — whether the episode terminated
-        info   : dict — from env.step(), includes prev_fdir
+        info   : dict — from env.step(), includes prev_fdir, target_alt_km
 
         Returns
         -------
@@ -61,42 +61,57 @@ class SurvivalReward:
         # ── 1. Alive bonus ─────────────────────────────────────────
         reward += self.cfg.w_alive * 1.0
 
-        # ── 2. Fuel penalty (ΔV proxy = throttle magnitude) ────────
+        # ── 2. Fuel penalty (ΔV proxy, scaled by 1/remaining_fuel) ─
         nav = action.get("nav", np.zeros(4, dtype=np.float32))
         throttle = float(np.clip(nav[3], 0.0, 1.0))
         thrust_mag = np.sqrt(nav[0]**2 + nav[1]**2 + nav[2]**2)
-        # Normalised ΔV proxy: direction magnitude × throttle
         dv_proxy = thrust_mag * throttle
-        reward -= self.cfg.w_fuel * dv_proxy
+
+        # Scale fuel penalty by inverse of remaining fuel fraction
+        fuel_frac = float(info.get("fuel_fraction", getattr(state, 'fuel_fraction', 1.0)))
+        fuel_scale = 1.0 / max(fuel_frac, 0.05)  # caps at 20x when fuel very low
+        reward -= self.cfg.w_fuel * dv_proxy * fuel_scale
+
+        # ── 2b. Fuel critical penalty (Phase A) ────────────────────
+        if fuel_frac < 0.10:
+            reward -= self.cfg.w_fuel_critical
+
+        # ── 2c. Coast bonus (Phase A) ──────────────────────────────
+        if throttle < 0.01 and fuel_frac > 0.0:
+            reward += self.cfg.w_coast_bonus
 
         # ── 3. Depth of Discharge penalty ──────────────────────────
-        #    DoD = 1 - SoC.  Penalise low SoC to teach battery care.
         dod = 1.0 - state.battery_soc
         reward -= self.cfg.w_dod * dod
 
         # ── 4. FDIR intervention penalty ───────────────────────────
-        #    Penalise transitions FROM NOMINAL to DEGRADED or SAFE.
         prev_fdir = info.get("prev_fdir", 0)
         curr_fdir = state.fdir_mode
         if prev_fdir == 0 and curr_fdir in (1, 2):
-            # AI caused a downgrade → sharp penalty
             reward -= self.cfg.w_fdir
         elif prev_fdir == 1 and curr_fdir == 2:
-            # Further degradation DEGRADED → SAFE
             reward -= self.cfg.w_fdir * 0.5
 
         # ── 5. Fatal penalty (terminal failure) ────────────────────
         if done and state.done_reason > 0:
             reward -= self.cfg.w_fatal
 
-        # ── 6. Altitude Maintenance Penalty ────────────────────────
-        #    Forces the AI to stay near the target orbit (e.g. 600km).
+        # ── 6. Altitude Maintenance Penalty (goal-conditioned) ─────
+        #    Uses target_alt_km from info dict (set per episode)
+        target_alt = float(info.get("target_alt_km", 600.0))
         alt_km = state.altitude_km
-        alt_err = abs(alt_km - self.cfg.target_alt_km)
+        alt_err = abs(alt_km - target_alt)
         if alt_err > self.cfg.alt_deadband_km:
-            # Penalise linearly for every km outside the deadband
             penalty = self.cfg.w_alt * (alt_err - self.cfg.alt_deadband_km)
             reward -= penalty
+
+        # ── 7. Thermal penalty (Phase A) ───────────────────────────
+        temp_battery = float(info.get("temp_battery",
+                                       getattr(state, 'temp_battery', 20.0)))
+        if temp_battery < -10.0:
+            reward -= self.cfg.w_thermal * abs(temp_battery + 10.0) / 30.0
+        elif temp_battery > 45.0:
+            reward -= self.cfg.w_thermal * (temp_battery - 45.0) / 25.0
 
         return reward
 
