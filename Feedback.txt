@@ -1,1 +1,11 @@
-nothing for now
+Báo cáo lỗi và tối ưu hóa hệ thống huấn luyện S-MAS:
+
+1. Lỗi nghiêm trọng trong thuật toán PPO (mappo.py):
+   - Mô tả lỗi: Trong hàm `ppo_update`, điều kiện ngắt vòng lặp batch `if end > total_size: break` khiến quá trình cập nhật trọng số mạng neural bị bỏ qua hoàn toàn (Silent Skip) khi tổng số bước gom dữ liệu nhỏ hơn kích thước batch mặc định (4096).
+   - Ảnh hưởng: Model giữ nguyên trạng thái khởi tạo ngẫu nhiên, không thể huấn luyện được trong các lượt debug/smoke-test hoặc cấu hình ít môi trường. Điểm thưởng (reward) tích lũy cực kỳ âm (~ -60.000.000) và các giá trị loss in ra đều bằng 0.
+   - Khắc phục: Thay thế bằng cơ chế lấy phần còn dư linh hoạt `end = min(start + cfg.batch_size, total_size)` và chỉ bỏ qua nếu batch cuối cùng nhỏ hơn 16 mẫu.
+
+2. Tối ưu hóa hiệu năng huấn luyện (env_wrapper.py & train.py):
+   - Vấn đề: C++ tích hợp module Attitude (đặc biệt là việc chạy RK4 ổn định ở tần suất 1s thông qua sub-stepping) làm chậm tốc độ huấn luyện tuần tự rất nhiều.
+   - Giải pháp: Xây dựng lớp `VectorSatelliteEnv` sử dụng `ThreadPoolExecutor` để chạy song song hóa ở mức C++ (bỏ qua GIL trong ctypes). 
+   - Kết quả: Tốc độ huấn luyện tăng lên vượt trội, đạt hơn 4.500 steps/giây trên CPU. Toàn bộ 2.000.000 steps của Phase 2 và Phase 3 hoàn thành chỉ trong hơn 7 phút.
