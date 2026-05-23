@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import TrainConfig, ObsConfig, RewardConfig, MissionRewardConfig, MAPPOConfig, EnvConfig
 from mappo import SharedActorCritic, RolloutBuffer, ppo_update
-from env_wrapper import SatelliteEnv
+from env_wrapper import SatelliteEnv, VectorSatelliteEnv
 from observation import ObservationBuilder
 from reward import SurvivalReward, MissionReward
 
@@ -38,13 +38,17 @@ def train(train_cfg: TrainConfig,
     print("=" * 70 + "\n")
 
     # ── Initialize environments ──────────────────────────────────
-    envs = [SatelliteEnv(env_cfg) for _ in range(env_cfg.num_envs)]
+    vec_env = VectorSatelliteEnv(env_cfg)
     obs_builder = ObservationBuilder()
+    _build_obs = obs_builder.build  # cache method ref (avoids repeated attr lookup)
     reward_fn = SurvivalReward(reward_cfg) if phase < 3 else MissionReward(reward_cfg, mission_rew_cfg)
 
-    obs_list = [obs_builder.build(e.reset(randomize=True),
-                                   target_alt_km=e._target_alt_km) for e in envs]
+    obs_list = [_build_obs(state,
+                           target_alt_km=vec_env.envs[i]._target_alt_km)
+                for i, state in enumerate(vec_env.reset(randomize=True))]
     done_list = [False] * env_cfg.num_envs
+    # Pre-allocate batch observation array (reused every rollout step)
+    batch_obs = np.empty((env_cfg.num_envs, obs_cfg.obs_dim), dtype=np.float32)
     
     # Brain
     model = SharedActorCritic(obs_cfg.obs_dim, mappo_cfg).to(device)
@@ -89,9 +93,10 @@ def train(train_cfg: TrainConfig,
             
             # ── Collect rollout ──
             for _ in range(mappo_cfg.rollout_steps):
-                # 1. Batch Inference
-                batch_obs = np.array(obs_list)
-                obs_tensor = torch.tensor(batch_obs, device=device, dtype=torch.float32)
+                # 1. Batch Inference (reuse pre-allocated array)
+                for _bi in range(env_cfg.num_envs):
+                    batch_obs[_bi] = obs_list[_bi]
+                obs_tensor = torch.from_numpy(batch_obs).to(device)
                 
                 with torch.no_grad():
                     out = model.act(obs_tensor)
@@ -105,18 +110,23 @@ def train(train_cfg: TrainConfig,
                 bus_lps  = out["bus_log_prob"].cpu().numpy()
                 mis_lps  = out["mission_log_prob"].cpu().numpy()
 
-                # 2. Step all envs
+                # 2. Step all envs in parallel
+                action_dicts = []
                 for i in range(env_cfg.num_envs):
-                    action_dict = {
+                    action_dicts.append({
                         "nav": np.array([
                             nav_acts[i,0], nav_acts[i,1], nav_acts[i,2],
                             ((nav_acts[i,3] + 1.0) / 2.0) if ((nav_acts[i,3] + 1.0) / 2.0) > 0.05 else 0.0
                         ], dtype=np.float32),
                         "bus": int(bus_acts[i]),
                         "mission": int(mis_acts[i]) if phase >= 3 else 0,
-                    }
+                    })
 
-                    raw_state, _, done, info = envs[i].step(action_dict)
+                results = vec_env.step(action_dicts)
+
+                for i in range(env_cfg.num_envs):
+                    raw_state, _, done, info = results[i]
+                    action_dict = action_dicts[i]
 
                     # Reward
                     if phase >= 3:
@@ -137,16 +147,19 @@ def train(train_cfg: TrainConfig,
 
                     # Auto-reset environment on death so it cannot skip time
                     if done:
-                        raw_state = envs[i].reset()
+                        raw_state = vec_env.reset_at(i, randomize=True)
 
-                    next_obs = obs_builder.build(raw_state,
-                                                  target_alt_km=envs[i]._target_alt_km)
-                    obs_list[i] = next_obs
+                    obs_list[i] = _build_obs(raw_state,
+                                             target_alt_km=vec_env.envs[i]._target_alt_km)
                     done_list[i] = done
                     total_steps += 1
+                    if total_steps >= train_cfg.total_timesteps:
+                        break
                 
                 # episode_steps tracks simulation time (1 step = 5s across all envs)
                 episode_steps += 1
+                if total_steps >= train_cfg.total_timesteps:
+                    break
 
             # ── PPO Update ──
             # Estimate last value and compute GAE for each environment separately
@@ -166,6 +179,18 @@ def train(train_cfg: TrainConfig,
             ep_entropy += losses.get("entropy", 0)
             ep_update_count += 1
 
+            # Print intermediate progress every 5 updates so the user has immediate feedback
+            if ep_update_count % 5 == 0:
+                print(f"      Update {ep_update_count:3d}/{int(env_cfg.max_steps_per_episode/mappo_cfg.rollout_steps)} | "
+                      f"Steps {total_steps:8,d} | "
+                      f"R0_curr {episode_reward:8.1f} | "
+                      f"pi {losses.get('policy_loss', 0):.4f} | "
+                      f"v {losses.get('value_loss', 0):.4f} | "
+                      f"H {losses.get('entropy', 0):.3f}")
+
+            if total_steps >= train_cfg.total_timesteps:
+                break
+
         # ── Episode Summary ──
         episode_count += 1
         ep_time = time.time() - episode_start
@@ -179,11 +204,11 @@ def train(train_cfg: TrainConfig,
         base = (f"  Ep {episode_count:5d} | "
                 f"Steps {total_steps:8,d} | "
                 f"R {episode_reward:8.1f} | "
-                f"SoC {envs[0].state.battery_soc*100:5.1f}% | "
-                f"Alt {envs[0].state.altitude_km:6.1f}km | "
-                f"Fuel {envs[0].state.fuel_fraction*100:4.1f}% | "
-                f"T {envs[0].state.temp_battery:5.1f}C | "
-                f"FDIR {envs[0].state.fdir_mode} | "
+                f"SoC {vec_env.envs[0].state.battery_soc*100:5.1f}% | "
+                f"Alt {vec_env.envs[0].state.altitude_km:6.1f}km | "
+                f"Fuel {vec_env.envs[0].state.fuel_fraction*100:4.1f}% | "
+                f"T {vec_env.envs[0].state.temp_battery:5.1f}C | "
+                f"FDIR {vec_env.envs[0].state.fdir_mode} | "
                 f"pi {avg_pi:.4f} | "
                 f"v {avg_v:.4f} | "
                 f"H {avg_ent:.3f}")
@@ -194,7 +219,7 @@ def train(train_cfg: TrainConfig,
         print(base)
 
         # Save
-        if episode_count % 1 == 0:
+        if episode_count % 50 == 0 or total_steps >= train_cfg.total_timesteps:
             os.makedirs("checkpoints", exist_ok=True)
             path = f"checkpoints/mappo_phase{phase}_ep{episode_count}.pt"
             torch.save({
@@ -205,12 +230,11 @@ def train(train_cfg: TrainConfig,
                 "total_steps": total_steps,
                 "phase": phase
             }, path)
-            print(f"    â†’ Checkpoint saved: {path}")
+            print(f"    -> Checkpoint saved: {path}")
 
         # Reset for next episode
-        for i in range(env_cfg.num_envs):
-            obs_list[i] = obs_builder.build(envs[i].reset(randomize=True),
-                                             target_alt_km=envs[i]._target_alt_km)
+        for i, state in enumerate(vec_env.reset(randomize=True)):
+            obs_list[i] = _build_obs(state, target_alt_km=vec_env.envs[i]._target_alt_km)
             done_list[i] = False
 
     print("\nTraining Complete.")

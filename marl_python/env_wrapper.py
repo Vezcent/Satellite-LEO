@@ -345,3 +345,37 @@ class SatelliteEnv:
 
     def __del__(self):
         self.close()
+
+
+class VectorSatelliteEnv:
+    """
+    Parallel environment wrapper using ThreadPoolExecutor to run C++ steps concurrently.
+    """
+    def __init__(self, cfg: EnvConfig):
+        self.cfg = cfg
+        self.num_envs = cfg.num_envs
+        self.envs = [SatelliteEnv(cfg) for _ in range(self.num_envs)]
+        from concurrent.futures import ThreadPoolExecutor
+        self.executor = ThreadPoolExecutor(max_workers=self.num_envs)
+
+    def reset(self, randomize: bool = False) -> list:
+        # Reset environments in parallel
+        futures = [self.executor.submit(self.envs[i].reset, randomize) for i in range(self.num_envs)]
+        return [f.result() for f in futures]
+
+    def reset_at(self, index: int, randomize: bool = False) -> StatePacket:
+        return self.envs[index].reset(randomize)
+
+    def step(self, actions: list) -> list:
+        # Step environments in parallel
+        futures = [self.executor.submit(self.envs[i].step, actions[i]) for i in range(self.num_envs)]
+        return [f.result() for f in futures]
+
+    def close(self):
+        for env in self.envs:
+            env.close()
+        self.executor.shutdown()
+
+    def __del__(self):
+        self.close()
+

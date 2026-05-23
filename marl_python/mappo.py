@@ -372,8 +372,8 @@ def ppo_update(model: SharedActorCritic,
         np.random.shuffle(indices)
 
         for start in range(0, total_size, cfg.batch_size):
-            end = start + cfg.batch_size
-            if end > total_size:
+            end = min(start + cfg.batch_size, total_size)
+            if end - start < 16:
                 break
             idx = indices[start:end]
 
