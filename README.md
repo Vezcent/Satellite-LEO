@@ -267,8 +267,3 @@ dotnet run --configuration Release   # runs assertion suite on startup
 ```
 
 ---
-
-## License
-
-This project is developed for academic and research purposes.  
-All rights reserved © 2024–2026.
