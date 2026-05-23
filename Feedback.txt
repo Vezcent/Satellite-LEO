@@ -1,11 +1,11 @@
-Báo cáo lỗi và tối ưu hóa hệ thống huấn luyện S-MAS:
+Report errors and optimize the S-MAS training system:
 
-1. Lỗi nghiêm trọng trong thuật toán PPO (mappo.py):
-   - Mô tả lỗi: Trong hàm `ppo_update`, điều kiện ngắt vòng lặp batch `if end > total_size: break` khiến quá trình cập nhật trọng số mạng neural bị bỏ qua hoàn toàn (Silent Skip) khi tổng số bước gom dữ liệu nhỏ hơn kích thước batch mặc định (4096).
-   - Ảnh hưởng: Model giữ nguyên trạng thái khởi tạo ngẫu nhiên, không thể huấn luyện được trong các lượt debug/smoke-test hoặc cấu hình ít môi trường. Điểm thưởng (reward) tích lũy cực kỳ âm (~ -60.000.000) và các giá trị loss in ra đều bằng 0.
-   - Khắc phục: Thay thế bằng cơ chế lấy phần còn dư linh hoạt `end = min(start + cfg.batch_size, total_size)` và chỉ bỏ qua nếu batch cuối cùng nhỏ hơn 16 mẫu.
+1. Serious error in PPO algorithm (mappo.py):
+   - Error description: In the function `ppo_update`, the batch loop break condition `if end > total_size: break` causes the process of updating neural network weights to be completely skipped (Silent Skip) when the total number of data collection steps is less than the default batch size (4096).
+   - Impact: The model retains its random initialization state, cannot be trained during debug/smoke-tests or has few environments configured. The accumulated reward points are extremely negative (~ -60,000,000) and the printed loss values ​​are all 0.
+   - Fix: Replace with a flexible residual mechanism `end = min(start + cfg.batch_size, total_size)` and only ignore if the final batch is less than 16 samples.
 
-2. Tối ưu hóa hiệu năng huấn luyện (env_wrapper.py & train.py):
-   - Vấn đề: C++ tích hợp module Attitude (đặc biệt là việc chạy RK4 ổn định ở tần suất 1s thông qua sub-stepping) làm chậm tốc độ huấn luyện tuần tự rất nhiều.
-   - Giải pháp: Xây dựng lớp `VectorSatelliteEnv` sử dụng `ThreadPoolExecutor` để chạy song song hóa ở mức C++ (bỏ qua GIL trong ctypes). 
-   - Kết quả: Tốc độ huấn luyện tăng lên vượt trội, đạt hơn 4.500 steps/giây trên CPU. Toàn bộ 2.000.000 steps của Phase 2 và Phase 3 hoàn thành chỉ trong hơn 7 phút.
+2. Optimize training performance (env_wrapper.py & train.py):
+   - Problem: C++ integrates the Attitude module (especially running RK4 stably at 1s through sub-stepping) which slows down the sequential training speed a lot.
+   - Solution: Build a `VectorSatelliteEnv` class that uses `ThreadPoolExecutor` to run parallelization at C++ level (ignore GIL in ctypes). 
+   - Results: Training speed increased dramatically, reaching more than 4,500 steps/second on CPU. All 2,000,000 steps of Phase 2 and Phase 3 are completed in just over 7 minutes.

@@ -1,4 +1,4 @@
-import { mat4, vec3 } from 'gl-matrix';
+import { mat4, vec3, vec4 } from 'gl-matrix';
 import type { IRenderContext } from './Renderer';
 import type { TelemetryData } from '../lib/telemetry';
 import { createSphere } from './geometry';
@@ -229,10 +229,6 @@ export class WebGLContext implements IRenderContext {
     this.vaoSat = this.createVao(satGeo.positions, satGeo.normals, satGeo.uvs, satGeo.indices);
     this.numSatIndices = satGeo.indices.length;
 
-    // Sun Quad (for billboard sun)
-    const sunPositions = new Float32Array([-1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0]);
-    const sunUvs = new Float32Array([0, 0,  1, 0,  1, 1,  0, 1]);
-    const sunIndices = new Uint16Array([0, 1, 2, 0, 2, 3]);
     // Hack: use vaoSat logic for simplicity but it's a quad
     this.numSatIndices = satGeo.indices.length; 
     // I'll just draw the sun using the Earth VAO or Sat VAO for now, 

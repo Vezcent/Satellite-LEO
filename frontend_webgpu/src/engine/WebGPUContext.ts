@@ -182,6 +182,7 @@ export class WebGPUContext implements IRenderContext {
   private earthUniformBuffer!: GPUBuffer;
   private earthWireUniformBuffer!: GPUBuffer;
   private satUniformBuffer!: GPUBuffer;
+  private sunUniformBuffer!: GPUBuffer;
   
   private earthBindGroup!: GPUBindGroup;
   private earthWireBindGroup!: GPUBindGroup;

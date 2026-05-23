@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useTelemetry, FdirMode } from '../lib/telemetry';
-import { Activity, Battery, ShieldAlert, Cpu, Radio, Orbit, ThermometerSun, Clock, Skull, Flame, Thermometer } from 'lucide-react';
+import { Activity, Battery, ShieldAlert, Cpu, Radio, Orbit, ThermometerSun, Clock, Skull, Thermometer } from 'lucide-react';
 import Renderer from '../engine/Renderer';
 import GroundControlPanel from './GroundControlPanel';
 import MusicPlayer from './MusicPlayer';

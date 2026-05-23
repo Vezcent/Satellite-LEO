@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Music, Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, ChevronUp, ChevronDown } from 'lucide-react';
+import { Music, Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, ChevronDown } from 'lucide-react';
 
 export default function MusicPlayer() {
   const [tracks, setTracks] = useState<string[]>([]);
