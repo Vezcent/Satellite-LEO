@@ -30,11 +30,15 @@ def run_monte_carlo(num_seeds=100, max_days=30, policy_type="passive", checkpoin
         from mappo import SharedActorCritic
         
         if not checkpoint_path or not os.path.exists(checkpoint_path):
-            # Try to auto-locate best checkpoint in marl_python/checkpoints/
-            checkpoints_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../marl_python/checkpoints"))
-            chk_files = glob_checkpoints = []
+            # Try to auto-locate best checkpoint in checkpoints/ or marl_python/checkpoints/
+            checkpoints_dirs = [
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "../checkpoints")),
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "../marl_python/checkpoints"))
+            ]
+            chk_files = []
             import glob
-            chk_files = glob.glob(os.path.join(checkpoints_dir, "mappo_phase3_ep*.pt"))
+            for d in checkpoints_dirs:
+                chk_files.extend(glob.glob(os.path.join(d, "mappo_phase3_ep*.pt")))
             if chk_files:
                 chk_files.sort(key=os.path.getmtime)
                 checkpoint_path = chk_files[-1]
@@ -44,10 +48,11 @@ def run_monte_carlo(num_seeds=100, max_days=30, policy_type="passive", checkpoin
                 sys.exit(1)
         
         # Load checkpoint
-        obs_dim = 37 # Phase A dimension
-        policy = SharedActorCritic(obs_dim=obs_dim)
+        obs_dim = ObsConfig().obs_dim
+        policy = SharedActorCritic(obs_dim=obs_dim, cfg=MAPPOConfig())
         checkpoint = torch.load(checkpoint_path, map_location=device)
-        policy.load_state_dict(checkpoint["model_state_dict"])
+        state_dict = checkpoint.get("model_state", checkpoint.get("model_state_dict"))
+        policy.load_state_dict(state_dict)
         policy.to(device)
         policy.eval()
         print("Trained MAPPO policy loaded successfully ✓")
