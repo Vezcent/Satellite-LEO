@@ -60,6 +60,21 @@ public static class TelemetryPacket
         bw.Write(action.PayloadOn);
         bw.Write((byte)(fdirOverridden ? 1 : 0));
 
+        // Phase A Subsystems (Fuel & Thermal)
+        bw.Write(state.FuelFraction);
+        bw.Write(state.FuelDepleted);
+        bw.Write(state.TempBus);
+        bw.Write(state.TempBattery);
+        bw.Write(state.TempPayload);
+        bw.Write(state.HeaterOn);
+
+        // Phase A ADCS Subsystem (Attitude)
+        bw.Write(state.SunAngle);
+        bw.Write(state.NadirError);
+        bw.Write(state.WheelMomentumX);
+        bw.Write(state.WheelMomentumY);
+        bw.Write(state.WheelMomentumZ);
+
         bw.Flush();
         byte[] payload = ms.ToArray();
 

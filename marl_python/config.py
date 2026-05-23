@@ -48,6 +48,7 @@ class ObsConfig:
     fuel_features:  int = 2            # fuel_fraction, fuel_depleted
     thermal_features: int = 4          # temp_bus, temp_battery, temp_payload, heater_on
     target_alt_features: int = 1       # target_alt_norm
+    attitude_features: int = 5         # sun_angle, nadir_error, wheel_momentum_x/y/z
     # look-ahead / look-back lag features
     lag_features: int = 4              # kp_3h, f107_3h, kp_6h, f107_6h
     # Goal-conditioned altitude range (Phase A)
@@ -61,6 +62,7 @@ class ObsConfig:
                 self.fdir_features + self.degrad_features +
                 self.seu_features + self.fuel_features +
                 self.thermal_features + self.target_alt_features +
+                self.attitude_features +
                 self.lag_features)
 
 
@@ -83,8 +85,8 @@ class RewardConfig:
     w_dod:   float = 30.0              # penalty for Depth of Discharge
     w_fdir:  float = 200.0             # penalty when FDIR intervenes
     w_fatal: float = 50000.0           # HUGE penalty on terminal failure
-    w_alt:   float = 2.0               # altitude maintenance penalty
-    alt_deadband_km: float = 25.0      # tolerance band
+    w_alt: float = 0.3              # was 2.0 — quá lớn, overwhelm learning
+    alt_deadband_km: float = 50.0   # was 25.0 — cho agent thời gian học
     # Phase A: fuel conservation
     w_fuel_critical: float = 500.0     # penalty when fuel < 10%
     w_coast_bonus: float = 2.0         # bonus for coasting (throttle=0, fuel>0)

@@ -105,6 +105,13 @@ public struct StatePacket
     public float  TempPayload;        // °C
     public byte   HeaterOn;           // 0/1
 
+    // ── ADCS (Phase A ADCS) ──
+    public float  SunAngle;            // rad, [0, π]
+    public float  NadirError;          // rad, [0, π]
+    public float  WheelMomentumX;      // Nms
+    public float  WheelMomentumY;      // Nms
+    public float  WheelMomentumZ;      // Nms
+
     /// <summary>Typed accessor for the FDIR mode.</summary>
     public readonly FdirMode FdirModeEnum => (FdirMode)FdirMode;
 

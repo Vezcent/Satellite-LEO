@@ -102,6 +102,13 @@ public static class Program
 
         // ── 5. Reset Engine ──────────────────────────────────────
         engine.Reset();
+        if (config.TargetAlt.HasValue)
+        {
+            engine.SetTargetAltitude(config.TargetAlt.Value);
+            obsBuilder.TargetAltKm = config.TargetAlt.Value;
+            groundCmd.TargetAltitudeKm = config.TargetAlt.Value;
+            Console.WriteLine($"  [INIT] Set target altitude to: {config.TargetAlt.Value} km");
+        }
         Console.WriteLine();
         Console.WriteLine("  Starting simulation loop...");
         Console.WriteLine("  ────────────────────────────────────────────────────────");
@@ -168,6 +175,44 @@ public static class Program
             if (groundCmd.ForcedFdirMode.HasValue)
             {
                 // Will be applied after step by overwriting state.FdirMode
+            }
+
+            if (groundCmd.PresetDirty)
+            {
+                string preset = groundCmd.ActivePresetName;
+                groundCmd.PresetDirty = false;
+                
+                Console.WriteLine($"  [PRESET] Applying preset: {preset}");
+                switch (preset)
+                {
+                    case "solarmax":
+                        engine.SetEnvironment(5.0, 1.2, 1.5, 0.3);
+                        engine.SetTime(86400 * 180);
+                        groundCmd.SeuMultiplier = 5.0;
+                        groundCmd.NoiseMultiplier = 1.2;
+                        groundCmd.DriftMultiplier = 1.5;
+                        groundCmd.DensityMultiplier = 0.3;
+                        break;
+                    case "halloween":
+                        engine.SetEnvironment(100.0, 2.0, 1.2, 0.15);
+                        engine.SetTime(120700800.0); // Year 2003, DOY 302
+                        groundCmd.SeuMultiplier = 100.0;
+                        groundCmd.NoiseMultiplier = 2.0;
+                        groundCmd.DriftMultiplier = 1.2;
+                        groundCmd.DensityMultiplier = 0.15;
+                        break;
+                    case "fuel_critical":
+                        groundCmd.TargetAltitudeKm = 550.0;
+                        break;
+                    case "cold_eclipse":
+                        engine.SetEnvironment(1.0, 1.2, 1.0, 0.01);
+                        engine.SetTime(86400 * 355); // DOY 355
+                        groundCmd.SeuMultiplier = 1.0;
+                        groundCmd.NoiseMultiplier = 1.2;
+                        groundCmd.DriftMultiplier = 1.0;
+                        groundCmd.DensityMultiplier = 0.01;
+                        break;
+                }
             }
 
             if (groundCmd.EnvironmentDirty)
@@ -311,7 +356,7 @@ public static class Program
         {
             int csState = Marshal.SizeOf<StatePacket>();
             int csAction = Marshal.SizeOf<ActionPacket>();
-            Assert(csState == 184, $"StatePacket size: expected 184, got {csState}");
+            Assert(csState == 222, $"StatePacket size: expected 222, got {csState}");
             Assert(csAction == 20, $"ActionPacket size: expected 20, got {csAction}");
             Pass(1, "ABI struct sizes", $"State={csState}B, Action={csAction}B");
             passed++;
@@ -354,7 +399,7 @@ public static class Program
         {
             var builder = new ObservationBuilder();
             obs = builder.Build(in state);
-            Assert(obs.Length == 30, $"Obs dim: expected 30, got {obs.Length}");
+            Assert(obs.Length == 42, $"Obs dim: expected 42, got {obs.Length}");
             // Check no NaN/Inf
             for (int i = 0; i < obs.Length; i++)
                 Assert(!float.IsNaN(obs[i]) && !float.IsInfinity(obs[i]),
@@ -362,7 +407,7 @@ public static class Program
             Pass(4, "Observation builder", $"dim={obs.Length}, range=[{obs.Min():F3}, {obs.Max():F3}]");
             passed++;
         }
-        catch (Exception ex) { Fail(4, "Observation builder", ex.Message); obs = new float[30]; }
+        catch (Exception ex) { Fail(4, "Observation builder", ex.Message); obs = new float[42]; }
 
         // ── Test 5: ONNX Session Load ────────────────────────────
         total++;
@@ -512,6 +557,7 @@ public static class Program
         public string? ReplayPath { get; init; } = null;
         public double ReplaySpeed { get; init; } = 1.0;
         public bool RunTest { get; init; } = false;
+        public double? TargetAlt { get; init; } = null;
     }
 
     private static Config ParseArgs(string[] args)
@@ -550,6 +596,9 @@ public static class Program
                     break;
                 case "--test":
                     config = config with { RunTest = true };
+                    break;
+                case "--target-alt" when i + 1 < args.Length:
+                    config = config with { TargetAlt = double.Parse(args[++i]) };
                     break;
             }
         }
@@ -598,6 +647,10 @@ public static class Program
         public double DriftMultiplier = 1.0;
         public double DensityMultiplier = 0.01;
         public volatile bool EnvironmentDirty;
+
+        // ── Presets ──
+        public string ActivePresetName = "";
+        public volatile bool PresetDirty;
     }
 
     private static void ParseGroundCommand(string json, GroundCommandState cmd)
@@ -652,6 +705,12 @@ public static class Program
                     cmd.DensityMultiplier = env.GetProperty("densityMultiplier").GetDouble();
                     cmd.EnvironmentDirty = true;
                     Console.WriteLine($"  [CMD] Environment: SEU={cmd.SeuMultiplier}x Noise={cmd.NoiseMultiplier}x Drift={cmd.DriftMultiplier}x Density={cmd.DensityMultiplier}");
+                    break;
+
+                case "preset":
+                    cmd.ActivePresetName = root.GetProperty("presetName").GetString() ?? "";
+                    cmd.PresetDirty = true;
+                    Console.WriteLine($"  [CMD] Preset triggered: {cmd.ActivePresetName}");
                     break;
 
                 default:

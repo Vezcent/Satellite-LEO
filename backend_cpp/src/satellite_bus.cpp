@@ -25,12 +25,12 @@ void SatelliteBus::reset() {
 }
 
 void SatelliteBus::update(bool in_eclipse, double panel_eff,
-                          bool deep_sleep, bool payload_on, double dt) {
+                          bool deep_sleep, bool payload_on, double cos_sun_angle, double dt) {
     // ── Solar power generation ────────────────────────────────────
     if (in_eclipse) {
         solar_w_ = 0.0;
     } else {
-        solar_w_ = constants::SAT_SOLAR_POWER_W * panel_eff;
+        solar_w_ = constants::SAT_SOLAR_POWER_W * panel_eff * cos_sun_angle;
     }
 
     // ── Power consumption ─────────────────────────────────────────

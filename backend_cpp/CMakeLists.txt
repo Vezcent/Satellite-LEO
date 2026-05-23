@@ -21,6 +21,7 @@ set(ENGINE_SOURCES
     src/satellite_bus.cpp
     src/stochastic.cpp
     src/thermal.cpp
+    src/attitude.cpp
     src/simulation_engine.cpp
     src/c_api.cpp
 )

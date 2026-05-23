@@ -114,6 +114,9 @@ public sealed class ReplayEngine
         bw.Write(ParseByte(parts, 12));    // gs_visible
         bw.Write(ParseDouble(parts, 13));  // panel_eff
         bw.Write(ParseDouble(parts, 14));  // drag_coeff
+        bw.Write(ParseDouble(parts, 24));  // atm_density
+        bw.Write(0f);                      // saaFlux10Mev placeholder
+        bw.Write(0f);                      // saaFlux30Mev placeholder
         bw.Write(ParseByte(parts, 22));    // is_done
         bw.Write(ParseByte(parts, 23));    // done_reason
         // Actions
@@ -124,6 +127,20 @@ public sealed class ReplayEngine
         bw.Write(ParseByte(parts, 19));    // deep_sleep
         bw.Write(ParseByte(parts, 20));    // payload_on
         bw.Write(ParseByte(parts, 21));    // fdir_overridden
+        // Phase A fields (from CSV)
+        bw.Write(ParseFloat(parts, 32));   // fuel_fraction
+        bw.Write((byte)(ParseFloat(parts, 32) <= 0f ? 1 : 0)); // fuel_depleted
+        bw.Write(ParseFloat(parts, 33));   // temp_bus
+        bw.Write(ParseFloat(parts, 34));   // temp_battery
+        bw.Write(ParseFloat(parts, 35));   // temp_payload
+        bw.Write(ParseByte(parts, 36));    // heater_on
+
+        // Phase A ADCS fields (from CSV)
+        bw.Write(ParseFloat(parts, 37));   // sun_angle
+        bw.Write(ParseFloat(parts, 38));   // nadir_error
+        bw.Write(ParseFloat(parts, 39));   // wheel_momentum_x
+        bw.Write(ParseFloat(parts, 40));   // wheel_momentum_y
+        bw.Write(ParseFloat(parts, 41));   // wheel_momentum_z
 
         bw.Flush();
 

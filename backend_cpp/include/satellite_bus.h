@@ -20,7 +20,7 @@ public:
     //   payload_on     : Mission Agent flag
     //   dt             : time step (seconds)
     void update(bool in_eclipse, double panel_eff,
-                bool deep_sleep, bool payload_on, double dt);
+                bool deep_sleep, bool payload_on, double cos_sun_angle, double dt);
 
     // ── Power Getters ─────────────────────────────────────────────
     double soc()              const { return soc_; }           // [0,1]

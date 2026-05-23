@@ -15,7 +15,7 @@ namespace smas {
 // ── State Packet ──────────────────────────────────────────────────
 // Direction: C++ → C# / Python
 struct StatePacket {
-    uint8_t version = 2;
+    uint8_t version = 3;
 
     // ── Time ──
     double  sim_time_s;           // total elapsed seconds
@@ -72,6 +72,13 @@ struct StatePacket {
     float   temp_battery;         // °C
     float   temp_payload;         // °C
     uint8_t heater_on;            // 0 / 1
+
+    // ── ADCS (Phase A ADCS) ──
+    float   sun_angle;            // rad, [0, π]
+    float   nadir_error;          // rad, [0, π]
+    float   wheel_momentum_x;     // Nms
+    float   wheel_momentum_y;     // Nms
+    float   wheel_momentum_z;     // Nms
 };
 
 // ── Action Packet ─────────────────────────────────────────────────

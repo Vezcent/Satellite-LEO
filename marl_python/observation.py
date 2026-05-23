@@ -154,6 +154,13 @@ class ObservationBuilder:
                            self.cfg.target_alt_min,
                            self.cfg.target_alt_max))
 
+        # ── 10.5. ADCS features (5) — Phase A ADCS ────────────────
+        obs.append(_minmax(float(getattr(s, 'sun_angle', 0.0)), 0.0, np.pi))
+        obs.append(_minmax(float(getattr(s, 'nadir_error', 0.0)), 0.0, np.pi))
+        obs.append(_minmax(float(getattr(s, 'wheel_momentum_x', 0.0)), -0.2, 0.2))
+        obs.append(_minmax(float(getattr(s, 'wheel_momentum_y', 0.0)), -0.2, 0.2))
+        obs.append(_minmax(float(getattr(s, 'wheel_momentum_z', 0.0)), -0.2, 0.2))
+
         # ── 11. Lag features (4) — weather look-back ──────────────
         if weather_lag:
             obs.append(_minmax(weather_lag.get("kp_3h", 0), 0, 9))

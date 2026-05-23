@@ -76,6 +76,14 @@ public static class EngineApi
         double noiseMultiplier,
         double driftMultiplier,
         double densityMultiplier);
+
+    /// <summary>Set absolute simulation time in seconds.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void smas_set_time(IntPtr engine, double timeS);
+
+    /// <summary>Set target mission altitude in km.</summary>
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void smas_set_target_altitude(IntPtr engine, double altKm);
 }
 
 /// <summary>
@@ -145,6 +153,18 @@ public sealed class PhysicsEngine : IDisposable
     {
         EngineApi.smas_set_environment(_handle, seuMultiplier, noiseMultiplier,
                                        driftMultiplier, densityMultiplier);
+    }
+
+    /// <summary>Set the simulation absolute time (seconds).</summary>
+    public void SetTime(double timeS)
+    {
+        EngineApi.smas_set_time(_handle, timeS);
+    }
+
+    /// <summary>Set the target altitude for goal-conditioned flight controller (km).</summary>
+    public void SetTargetAltitude(double altKm)
+    {
+        EngineApi.smas_set_target_altitude(_handle, altKm);
     }
 
     public void Dispose()

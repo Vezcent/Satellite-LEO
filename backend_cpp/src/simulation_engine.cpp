@@ -53,6 +53,7 @@ void SimulationEngine::reset() {
     actuator_.reset();
     drift_.reset();
     thermal_.reset();
+    attitude_.reset();
 
     // Time
     sim_time_struct_.year = init.elements.epoch_year;
@@ -271,11 +272,21 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
 
     orbit_ = rk4_step(orbit_, ap);
 
+    // ── 5.5. Attitude dynamics (Phase A ADCS) ─────────────────────
+    attitude_.step(constants::DT, orbit_.pos, sun, nullptr);
+
+    // Pointing error constraint: CHRIS camera cannot image if pointing error > 5 degrees
+    if (exec_action.payload_on != 0 && !attitude_.is_nadir_pointing(5.0 * constants::DEG2RAD)) {
+        exec_action.payload_on = 0;
+    }
+
     // ── 6. Power subsystem ────────────────────────────────────────
     double panel_eff = cfg_.enable_drift ? drift_.panel_efficiency() : 1.0;
+    double cos_sun = attitude_.cos_sun_angle();
     bus_.update(eclipse, panel_eff,
                 exec_action.deep_sleep != 0,
                 exec_action.payload_on != 0,
+                cos_sun,
                 constants::DT);
 
     // ── 6.5 Thermal subsystem (Phase A) ──────────────────────────
@@ -382,6 +393,13 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     state_.temp_battery = static_cast<float>(thermal_.temp_battery());
     state_.temp_payload = static_cast<float>(thermal_.temp_payload());
     state_.heater_on    = thermal_.heater_on() ? 1 : 0;
+
+    // ADCS (Phase A ADCS)
+    state_.sun_angle        = static_cast<float>(attitude_.state().sun_angle);
+    state_.nadir_error      = static_cast<float>(attitude_.state().nadir_error);
+    state_.wheel_momentum_x = static_cast<float>(attitude_.state().wheel_h[0]);
+    state_.wheel_momentum_y = static_cast<float>(attitude_.state().wheel_h[1]);
+    state_.wheel_momentum_z = static_cast<float>(attitude_.state().wheel_h[2]);
 
     return state_;
 }

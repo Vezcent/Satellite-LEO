@@ -13,6 +13,7 @@
 #include "satellite_bus.h"
 #include "stochastic.h"
 #include "thermal.h"
+#include "attitude.h"
 #include <string>
 
 namespace smas {
@@ -68,6 +69,7 @@ private:
     OrbitalState      orbit_;
     SatelliteBus      bus_;
     ThermalModel      thermal_;
+    AttitudeModel     attitude_;
 
     // ── Stochastic ──
     SensorNoise       sensor_noise_;

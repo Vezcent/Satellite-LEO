@@ -29,7 +29,7 @@ namespace SmasController.AI;
 /// </summary>
 public sealed class ObservationBuilder
 {
-    public const int ObsDim = 37;
+    public const int ObsDim = 42;
 
     // Goal-conditioned altitude range (must match config.py)
     private const double TargetAltMin = 550.0;
@@ -110,6 +110,13 @@ public sealed class ObservationBuilder
 
         // ── 10. Target altitude (1) — Phase A (goal-conditioned) ──
         obs[i++] = MinMax(TargetAltKm, TargetAltMin, TargetAltMax);
+
+        // ── 10.5. ADCS features (5) — Phase A ADCS ────────────────
+        obs[i++] = MinMax(s.SunAngle, 0.0, Math.PI);
+        obs[i++] = MinMax(s.NadirError, 0.0, Math.PI);
+        obs[i++] = MinMax(s.WheelMomentumX, -0.2, 0.2);
+        obs[i++] = MinMax(s.WheelMomentumY, -0.2, 0.2);
+        obs[i++] = MinMax(s.WheelMomentumZ, -0.2, 0.2);
 
         // ── 11. Lag features (4) — placeholder zeros ──────────────
         obs[i++] = 0f;

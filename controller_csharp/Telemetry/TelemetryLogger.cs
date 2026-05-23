@@ -45,7 +45,9 @@ public sealed class TelemetryLogger : IDisposable
             "thrust_x,thrust_y,thrust_z,throttle,deep_sleep,payload_on," +
             "fdir_overridden,is_done,done_reason," +
             "atm_density,battery_capacity_j,charge_cycles," +
-            "manual_override,seu_mult,noise_mult,drift_mult,density_mult");
+            "manual_override,seu_mult,noise_mult,drift_mult,density_mult," +
+            "fuel_fraction,temp_bus,temp_battery,temp_payload,heater_on," +
+            "sun_angle,nadir_error,wheel_momentum_x,wheel_momentum_y,wheel_momentum_z");
     }
 
     /// <summary>Log a single simulation step.</summary>
@@ -87,6 +89,18 @@ public sealed class TelemetryLogger : IDisposable
         _writer.Write(','); _writer.Write(noiseMult);
         _writer.Write(','); _writer.Write(driftMult);
         _writer.Write(','); _writer.Write(densityMult);
+        // Phase A Fuel and Thermal fields
+        _writer.Write(','); _writer.Write(state.FuelFraction.ToString("F4"));
+        _writer.Write(','); _writer.Write(state.TempBus.ToString("F2"));
+        _writer.Write(','); _writer.Write(state.TempBattery.ToString("F2"));
+        _writer.Write(','); _writer.Write(state.TempPayload.ToString("F2"));
+        _writer.Write(','); _writer.Write(state.HeaterOn);
+        // Phase A ADCS fields
+        _writer.Write(','); _writer.Write(state.SunAngle.ToString("F4"));
+        _writer.Write(','); _writer.Write(state.NadirError.ToString("F4"));
+        _writer.Write(','); _writer.Write(state.WheelMomentumX.ToString("F4"));
+        _writer.Write(','); _writer.Write(state.WheelMomentumY.ToString("F4"));
+        _writer.Write(','); _writer.Write(state.WheelMomentumZ.ToString("F4"));
         _writer.WriteLine();
     }
 

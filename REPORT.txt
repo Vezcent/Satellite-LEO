@@ -3,10 +3,11 @@
                          TECHNICAL REPORT (ENGLISH)
 ================================================================================
   Author:  S-MAS Development Team
-  Date:    2026-05-02
-  Version: 2.0
-  Status:  All 7 Phases Complete + Post-Deployment Hardening + 13yr Lifetime
+  Date:    2026-05-23
+  Version: 3.0
+  Status:  Phase 0-7 Complete + Phase A (Fuel/Thermal/Goal-Alt) Code Complete
   Codebase: 4 languages (C++, Python, C#, TypeScript)
+  ABI:     StatePacket=202B (v2) | ActionPacket=20B (v1) | obs_dim=37
 ================================================================================
 
 1. ABSTRACT
@@ -19,20 +20,28 @@
   integrating real historical space weather data (2001-2020), radiation
   hazard maps, and a validated atmospheric drag model.
 
-  The platform spans four programming languages across a six-phase pipeline:
-  C++ (physics engine), Python (MARL training), C# (operational controller),
+  The platform spans four programming languages across an eight-phase pipeline:
+  C++ (physics engine with fuel, thermal, and degradation models), Python
+  (MARL training with MAPPO), C# (operational controller with ONNX inference),
   and TypeScript/React (WebGPU 3D dashboard). Three heterogeneous AI agents
   (Navigation, Bus Management, Mission) coordinate under a rule-based FDIR
   safety governor using the MAPPO algorithm with Centralized Training and
   Decentralized Execution (CTDE).
 
   The physics engine was validated against 30 days of real PROBA-1 TLE data
-  using SGP4 propagation, achieving an MSE of 336.5 km^2 after calibration.
+  using SGP4 propagation, achieving an RMSE of ~18.3 km after calibration.
 
-  Post-deployment analysis identified three critical failure modes — battery
-  Arrhenius over-aging, panel drift mismatch, and eclipse drain — which were
-  resolved through targeted engine and governor updates, extending operational
-  lifetime from 442 days to well beyond 600+ days (ongoing).
+  Post-deployment analysis identified and resolved five critical failure modes,
+  extending operational lifetime from 442 days to 13+ years (genuine battery
+  end-of-life). The system successfully survived a full 10-year simulation
+  window with healthy subsystems.
+
+  Phase A (2026-05-22) added three new subsystems: finite propellant budget
+  with Tsiolkovsky fuel tracking, a 3-node lumped thermal model with battery
+  heater control, and goal-conditioned altitude training (550-750 km). This
+  expanded the observation vector from 30 to 37 dimensions and the StatePacket
+  from 184 to 202 bytes.
+
 
 2. SYSTEM ARCHITECTURE
 ================================================================================
@@ -40,8 +49,8 @@
   2.1 Technology Stack
 
     Layer              | Technology        | Purpose
-    -------------------|-------------------|----------------------------------
-    Physics Core       | C++ 17            | RK4 integrator, J2, drag, FDIR
+    -------------------|-------------------|------------------------------------
+    Physics Core       | C++ 14 (MSVC 19)  | RK4, J2, drag, fuel, thermal, FDIR
     MARL Training      | Python 3.10       | MAPPO, PyTorch, ctypes bridge
     Operations Bridge  | C# / .NET 10      | ONNX inference, WebSocket server
     Visualization      | React + WebGPU    | Real-time 3D telemetry dashboard
@@ -61,16 +70,31 @@
 
   2.3 Global Constants
 
-    Parameter             | Value
-    ----------------------|------------------
-    Integration timestep  | dt = 5.0 seconds
-    Target altitude       | 600 km (SSO)
-    Failure threshold     | < 200 km altitude
-    Satellite mass        | 94 kg (PROBA-1)
-    Aero cross-section    | 0.36 m^2
-    Simulation resolution | 17,280 steps/day
+    Parameter                | Value
+    -------------------------|-----------------------------
+    Integration timestep     | dt = 5.0 seconds
+    Default altitude         | ~600 km (SSO, PROBA-1)
+    Training target range    | 550-750 km (goal-conditioned)
+    Failure threshold        | < 200 km altitude (REENTRY)
+    Satellite dry mass       | 94 kg (PROBA-1)
+    Fuel mass (hydrazine)    | 5.6 kg
+    Thruster Isp             | 220 s (monoprop)
+    Aero cross-section       | 0.36 m^2
+    Battery capacity (BOL)   | 360,000 J (100 Wh)
+    Solar array power (BOL)  | 90 W (GaAs)
+    Simulation resolution    | 17,280 steps/day
 
-3. PHASE 0 & 0.5: DATA PIPELINE
+  2.4 Known dt=5s Limitations
+
+    Subsystem   | Issue                                    | Severity
+    ------------|------------------------------------------|----------
+    Thruster    | Min burn = 5s, real ~0.1-1s              | Low
+    Eclipse     | Penumbra ~20s = only 4 steps             | Low
+    ADCS        | Attitude control needs 1-10 Hz           | Medium
+                | Solution: sub-stepping (5x1s per step)   |
+
+
+3. DATA PIPELINE (Phase 0/0.5)
 ================================================================================
 
   Raw datasets processed to < 50 MB total:
@@ -82,11 +106,20 @@
     PROBA-1 TLE History        | Space-Track | 3.1 MB  | 142 B (initial)
     Ground Station Coords      | Manual      | 206 B   | 557 B
 
+  152,669 hourly weather records (2000-2020):
+    Columns: Year, DOY, Hour, Kp, Dst, Ap, F10.7
+
+  10,890 SAA grid points (90 lat x 121 lon):
+    Columns: Latitude, Longitude, Flux_10MeV, Flux_30MeV
+
+  2 ESA ground stations: Redu (Belgium) + Kiruna (Sweden), 5° elevation masks
+
   Key design decision: Atmospheric density is computed at runtime using
   NRLMSISE-00 instead of storing precomputed grids, eliminating terabytes
   of atmospheric data.
 
-4. PHASE 1: C++ PHYSICS ENGINE
+
+4. C++ PHYSICS ENGINE (Phase 1)
 ================================================================================
 
   4.1 Orbital Mechanics
@@ -97,6 +130,7 @@
     - Atmosphere co-rotation correction: v_rel = v - (omega x r)
     - Thrust: continuous 3D vector with throttle [0, 1]
     - 5% throttle deadband applied to prevent micro-thrust jitter
+    - Dynamic mass: current_mass = SAT_MASS_KG - (SAT_FUEL_KG - fuel_kg)
 
   4.2 NRLMSISE-00 Atmospheric Model (Simplified)
 
@@ -104,78 +138,243 @@
     - Bates-Walker temperature profile: T(h) = T_inf - (T_inf - T_120) * exp(-sigma * dh)
     - Diffusive equilibrium density with diurnal and latitudinal modulation
     - density_multiplier = 0.01 (calibrated for multi-year orbital lifetime)
-      Short-term validation (30 days): 0.1 gives MSE=336.5 km^2
+      Short-term validation (30 days): 0.1 gives RMSE ~18.3 km
       Long-term realism (multi-year): 0.01 for realistic ~20+ yr decay at 600km
 
-  4.3 Subsystems Modeled
+  4.3 Propulsion Subsystem (Phase A — NEW)
 
-    - SatelliteBus: GaAs solar arrays (~90 W), Li-ion battery with Arrhenius
-      degradation, eclipse/sunlight power cycling
-    - Stochastic layer: sensor noise, actuator delay (1-3 steps), actuator
-      error (+/-5%), epistemic Cd drift (random walk)
-    - SEU generator: probabilistic single-event upsets during SAA transit
-    - Ground station visibility: spherical LoS with 5-degree elevation mask
+    Tsiolkovsky Rocket Equation:
+      delta_m = m * (1 - exp(-dv / (Isp * g0)))
+      Achievable dv = Isp * g0 * ln(m_before / m_after)
 
-  4.4 Degradation Model (Calibrated)
+    Parameters:
+      SAT_FUEL_KG       = 5.6 kg (hydrazine, PROBA-1)
+      THRUSTER_ISP_S    = 220 s (monopropellant)
+      G0                = 9.80665 m/s^2
+      FUEL_CRITICAL_KG  = 0.1 kg
+      Max delta-v       = ~132 m/s (full fuel budget)
 
-    Battery Arrhenius Model:
-      loss_per_cycle = BATT_CYCLE_DEGRAD * (1 + BATT_THERMAL_FACT * cycles)
-      capacity      *= (1 - loss_per_cycle)
+    Behavior:
+      - Fuel tracked per-step, depleted by Tsiolkovsky equation
+      - Thrust disabled when fuel_kg <= 0
+      - Partial burns supported (fuel runs out mid-step)
+      - FUEL_DEPLETED_LOW done reason (fuel=0 + alt<400km)
 
-      Parameter           | Original  | Calibrated | Effect
-      --------------------|-----------|------------|--------------------------------
-      BATT_CYCLE_DEGRAD   | 0.00005   | 0.00002    | 2.5x slower base degradation
-      BATT_THERMAL_FACT   | 0.001     | 0.00005    | 20x slower acceleration factor
-      Battery EOL (80%)   | ~Year 1.7 | ~Year 14   | Matches real satellite data
+  4.4 Thermal Subsystem (Phase A — NEW)
 
-    Panel Degradation:
-      Parameter           | Original  | Calibrated | Effect
-      --------------------|-----------|------------|--------------------------------
-      PANEL_DRIFT_SIGMA   | 0.0001/step | 0.00003/step | 3.3x slower random walk
-      Secular loss rate   | 1e-8/step | 2e-9/step  | 5x slower (1.5%/yr realistic)
-      Floor               | 0.40      | 0.30       | Matches C++ engine clamp
+    3-Node Lumped Thermal Model:
+      Nodes: Bus (50kg, 900 J/kg/K), Battery, Payload
+      Inter-node conduction: Bus<->Battery 2 W/K, Bus<->Payload 1 W/K
 
-  4.5 C API (DLL Export)
+    Heat Sources:
+      - Solar flux: 1361 W/m^2 * absorptivity(0.3) * area * cos(sun_angle)
+      - Earth albedo: 0.3 * solar_flux * view_factor
+      - Internal dissipation: power_draw_w (bus electrical waste heat)
 
-    Function              | Signature
-    ----------------------|---------------------------------------------
-    smas_create           | (data_dir, seed, density_mult) -> handle
-    smas_init             | (handle) -> int
-    smas_reset            | (handle) -> void
-    smas_set_time         | (handle, time_s) -> void
-    smas_set_degradation  | (handle, capacity_j, panel_eff) -> void
-    smas_step             | (handle, ActionPacket*, StatePacket*) -> void
-    smas_destroy          | (handle) -> void
+    Heat Sinks:
+      - Stefan-Boltzmann radiative cooling to space (2.7 K)
+      - Radiator area: 0.25 m^2, emissivity: 0.8
 
-    StatePacket: 184 bytes, packed (version 1)
-    ActionPacket: 19 bytes, packed (version 1)
+    Battery Heater:
+      - Power: 7 W
+      - Activation: temp_battery < -5°C
+      - Hysteresis: 5°C (deactivates at 0°C)
+      - Draws directly from battery SoC
 
-5. PHASE 2: CORE MARL FRAMEWORK
+    Battery Temperature Factor:
+      - battery_temp_factor = 1.0 in [0°C, 40°C]
+      - Linear degradation outside: min 0.5 at extreme temps
+      - Modulates effective battery capacity: cap_eff = cap * factor
+
+  4.5 Power & Battery Subsystem
+
+    - GaAs solar arrays: 90 W BOL, degraded by panel_efficiency
+    - Li-ion battery: 360,000 J (100 Wh) BOL
+    - Power modes:
+        Normal:     30W bus + 25W payload = 55W
+        Deep sleep:  5W bus only
+        Payload ON:  25W additional draw
+    - Arrhenius cycle degradation (calibrated):
+        BATT_CYCLE_DEGRAD = 0.00002 (2.5x slower than original)
+        BATT_THERMAL_FACT = 0.00005 (20x slower acceleration)
+        Battery EOL (80%): ~Year 14 (matches real satellite data)
+    - Panel drift (calibrated):
+        PANEL_DRIFT_SIGMA = 0.00003/step (3.3x slower random walk)
+        Secular loss rate: 2e-9/step (5x slower, ~1.5%/yr realistic)
+        Floor: 0.30
+
+  4.6 Stochastic Layer
+
+    - Sensor noise: pos sigma=50m, vel sigma=0.5m/s, SoC sigma=1%
+    - Actuator model: 1-3 step action delay queue, +/-5% error
+    - Epistemic drift: Cd random walk (sigma=0.001/step)
+    - SEU generator:
+        Base probability: 0.001
+        SAA multiplier: 100x
+        Fatal rate: 0.0001 of base (100x reduction from original)
+        ~2% chance of fatal SEU over 20 years
+
+  4.7 FDIR State Machine
+
+    State      | Trigger    | AI Control
+    -----------|------------|--------------------------------------------
+    NOMINAL    | SoC > 20%  | Full autonomy
+    DEGRADED   | SoC < 20%  | Payload OFF, thrust capped at 30%
+    SAFE       | SoC < 10%  | All overridden, deep sleep forced
+    RECOVERY   | SoC >= 15% | Payload OFF, transitioning back to NOMINAL
+
+    Transition hysteresis:
+      DEGRADED -> RECOVERY: SoC >= 25%
+      SAFE -> RECOVERY:     SoC >= 15%
+      RECOVERY -> NOMINAL:  SoC >= 30%
+
+  4.8 C API (DLL Export — 13 Functions)
+
+    Function                  | Signature
+    --------------------------|---------------------------------------------
+    smas_create               | (data_dir, seed, density_mult) -> handle
+    smas_init                 | (handle) -> int
+    smas_reset                | (handle) -> void
+    smas_set_time             | (handle, time_s) -> void
+    smas_set_degradation      | (handle, capacity_j, panel_eff) -> void
+    smas_set_environment      | (handle, seu, noise, drift, density) -> void
+    smas_set_target_altitude  | (handle, alt_km) -> void         [Phase A]
+    smas_get_target_altitude  | (handle) -> double               [Phase A]
+    smas_step                 | (handle, ActionPacket*, StatePacket*) -> void
+    smas_is_done              | (handle) -> int
+    smas_destroy              | (handle) -> void
+    smas_state_packet_size    | () -> int
+    smas_action_packet_size   | () -> int
+
+  4.9 Binary Contracts (ABI)
+
+    StatePacket (202 bytes, version=2, #pragma pack(push,1)):
+      Offset   Type    Field
+      ------   ------  ----------------------
+      0        u8      version
+      1        f64     sim_time_s
+      9        i32     year
+      13       i32     doy
+      17       i32     hour
+      21       f64     pos_x, pos_y, pos_z
+      45       f64     vel_x, vel_y, vel_z
+      69       f64     altitude_km
+      77       f64     latitude_deg
+      85       f64     longitude_deg
+      93       f64     battery_soc
+      101      f64     battery_capacity_j
+      109      f64     solar_power_w
+      117      f64     power_draw_w
+      125      f64     atm_density
+      133      f64     drag_force_n
+      141      f32     saa_flux_10mev
+      145      f32     saa_flux_30mev
+      149      u8      in_eclipse
+      150      u8      in_saa
+      151      u8      gs_visible
+      152      f64     time_since_contact_s
+      160      u8      fdir_mode
+      161      f64     panel_efficiency
+      169      f64     drag_coeff
+      177      u32     charge_cycles
+      181      u8      is_done
+      182      u8      done_reason
+      183      u8      seu_active
+      --- Phase A additions ---
+      184      f32     fuel_fraction
+      188      u8      fuel_depleted
+      189      f32     temp_bus
+      193      f32     temp_battery
+      197      f32     temp_payload
+      201      u8      heater_on
+      Total: 202 bytes
+
+    ActionPacket (20 bytes, version=1, #pragma pack(push,1)):
+      Offset   Type    Field
+      ------   ------  ----------------------
+      0        u8      version
+      1        f32     thrust_x
+      5        f32     thrust_y
+      9        f32     thrust_z
+      13       f32     throttle
+      17       u8      deep_sleep
+      18       u8      payload_on
+      19       u8      inject_seu
+      Total: 20 bytes
+
+    DoneReason Enum:
+      ONGOING=0, BATTERY_DEAD=1, TELEMETRY_LOSS=2, REENTRY=3,
+      SEU_FATAL=4, FUEL_DEPLETED_LOW=5
+
+
+5. MARL FRAMEWORK (Phase 2)
 ================================================================================
 
   5.1 Algorithm: MAPPO (Multi-Agent PPO)
 
-    - Shared policy architecture (all agents share weights)
+    - Shared policy architecture (all agents share trunk weights)
     - Centralized Training, Decentralized Execution (CTDE)
     - GAE (lambda = 0.95, gamma = 0.99) for advantage estimation
     - Clip ratio: 0.2, entropy coefficient: 0.01
+    - Learning rate: 3e-4, batch size: 4096
     - 16 parallel environments during training (num_envs = 16)
     - Episode length: 120,960 steps (~1 week simulated time)
+    - Rollout length: 1,176 steps (~1 orbit period)
+    - PPO update epochs: 2
 
-  5.2 Observation Space (29 dimensions)
+  5.2 Network Architecture
 
-    Category       | Features                              | Dims
-    ---------------|---------------------------------------|-----
-    Orbital        | alt, lat, lon, |v|, vx_norm, vy_norm  | 6
-    Power          | SoC, capacity_frac, solar_w, draw_w   | 4
-    Environment    | rho_log, flux10_log, flux30_log, ecl, saa | 5
-    Communication  | gs_visible, time_since_contact_norm   | 2
-    FDIR           | one-hot [NOM, DEG, SAFE, REC]         | 4
-    Degradation    | panel_eff, cd_norm, cycles_norm       | 3
-    SEU            | seu_active                            | 1
-    Lag features   | kp_3h, f107_3h, kp_6h, f107_6h       | 4
+    SharedActorCritic:
+      Trunk: MLP(obs_dim=37, hidden=128, layers=2, activation=tanh)
+      NavigationHead: Linear(128, 8) -> mu[4] + log_std[4] -> Gaussian + tanh
+      ResourceHead:   Linear(128, 1) -> Bernoulli (deep_sleep)
+      MissionHead:    Linear(128, 1) -> Bernoulli (payload_on)
+      Critic:         Linear(128, 1) -> V(s) scalar
 
-  5.3 Agent Action Spaces
+    Total parameters: ~21,500
+
+  5.3 Observation Space (37 dimensions)
+
+    Index  | Group       | Feature                   | Normalization
+    -------|-------------|---------------------------|----------------------
+    0      | Orbit (7)   | altitude_km               | MinMax [200, 800]
+    1      |             | latitude_deg              | MinMax [-90, 90]
+    2      |             | longitude_deg             | MinMax [-180, 180]
+    3      |             | velocity_mag              | MinMax [7000, 8000]
+    4      |             | vx_norm                   | vel_x / v_mag
+    5      |             | vy_norm                   | vel_y / v_mag
+    6      |             | vz_norm                   | vel_z / v_mag
+    7      | Power (4)   | battery_soc               | Raw [0, 1]
+    8      |             | capacity_frac             | MinMax [0, 360000]
+    9      |             | solar_power_w             | MinMax [0, 100]
+    10     |             | power_draw_w              | MinMax [0, 60]
+    11     | Env (5)     | rho_log                   | Robust (med=-10, iqr=1)
+    12     |             | flux10_log                | MinMax [0, 5]
+    13     |             | flux30_log                | MinMax [0, 5]
+    14     |             | in_eclipse                | Binary 0/1
+    15     |             | in_saa                    | Binary 0/1
+    16     | Comm (2)    | gs_visible                | Binary 0/1
+    17     |             | time_since_contact_norm   | MinMax [0, 259200]
+    18-21  | FDIR (4)    | one_hot [NOM,DEG,SAFE,REC]| One-hot
+    22     | Degrad (3)  | panel_efficiency          | Raw [0, 1]
+    23     |             | cd_norm                   | MinMax [1.5, 3.0]
+    24     |             | cycles_norm               | MinMax [0, 50000]
+    25     | SEU (1)     | seu_active                | Binary 0/1
+    26     | Fuel (2)    | fuel_fraction             | Raw [0, 1]
+    27     |             | fuel_depleted             | Binary 0/1
+    28     | Therm (4)   | temp_bus                  | MinMax [-40, 60] °C
+    29     |             | temp_battery              | MinMax [-40, 60] °C
+    30     |             | temp_payload              | MinMax [-40, 60] °C
+    31     |             | heater_on                 | Binary 0/1
+    32     | Target (1)  | target_alt_norm           | MinMax [550, 750] km
+    33     | Lag (4)     | kp_3h                     | MinMax [0, 9]
+    34     |             | f107_3h                   | MinMax [50, 300]
+    35     |             | kp_6h                     | MinMax [0, 9]
+    36     |             | f107_6h                   | MinMax [50, 300]
+
+    Evolution: 29-dim (Phase 2 original) -> 30-dim (+orbit vz) -> 37-dim (Phase A)
+
+  5.4 Agent Action Spaces
 
     Agent       | Action Type | Space
     ------------|-------------|-------------------------------
@@ -183,37 +382,75 @@
     Bus Manager | Discrete    | deep_sleep {0, 1}
     Mission     | Discrete    | payload_on {0, 1}
 
-  5.4 Reward Function
+  5.5 Reward Function (9 Components — Survival)
 
-    R_t = w_alive - w_fuel * dV_proxy - w_dod * DoD
-        - w_alt * |h - 600| - w_fatal * P_fatal
+    R_survival = w_alive
+              - w_fuel * thrust_mag * throttle * fuel_scale
+              - w_fuel_critical * (fuel < 10%)
+              + w_coast_bonus * (throttle < 0.01)
+              - w_dod * (1 - SoC)
+              - w_fdir * FDIR_transition
+              - w_fatal * terminal_failure
+              - w_alt * max(0, |alt - target| - deadband)
+              - w_thermal * temp_deviation
 
-    Key weights (Phase 3, calibrated):
-      w_fatal = 50,000  (100x increase from Phase 2 to prevent reward hacking)
-      w_dod   = tuned to penalize deep battery discharge
-      Mission: +50.0 valid target, -500.0 SAA imaging
+    Weight            | Value     | Purpose
+    ------------------|-----------|------------------------------------------
+    w_alive           | 5.0       | Per-step survival bonus
+    w_fuel            | 10.0      | Fuel consumption penalty (scales with 1/fuel_frac, capped 20x)
+    w_fuel_critical   | 500.0     | Fuel below 10% penalty
+    w_coast_bonus     | 2.0       | Reward for not thrusting (fuel conservation)
+    w_dod             | 30.0      | Depth-of-Discharge penalty
+    w_fdir            | 200.0     | FDIR NOM->DEG/SAFE transition penalty
+    w_fatal           | 50,000.0  | Terminal failure penalty
+    w_alt             | 0.3       | Altitude deviation from target (deadband 50 km)
+    w_thermal         | 50.0      | Battery temp outside [-10, 45]°C
 
-  5.5 Progressive Degradation Training
+  5.6 Reward Function (7 Additional Components — Mission)
+
+    R_mission = R_survival
+              + w_valid_target * first_over_target
+              + 2.0 * continued_imaging
+              - w_saa_penalty * payload_in_saa
+              - w_idle_power * payload_not_over_target
+              - w_sloth_penalty * sleeping_over_target
+              - 150.0 * low_battery_imaging
+              - 50.0 * meta_override_penalty
+
+    Weight            | Value     | Purpose
+    ------------------|-----------|------------------------------------------
+    w_valid_target    | 100.0     | First imaging step over valid target
+    w_saa_penalty     | 200.0     | Payload ON inside SAA
+    w_idle_power      | 15.0      | Payload ON but not over target
+    w_sloth_penalty   | 50.0      | Deep sleep while SoC>90% over target
+
+    Valid target criteria:
+      NOT in_saa AND NOT in_eclipse AND lat in [-60, 60]° AND solar_power >= 10W
+
+  5.7 Progressive Degradation Training
 
     At each episode reset, the engine starts at a random mission age:
-      capacity_j    ~ Uniform(120,000 J, 360,000 J)   [prev: 200k-360k]
-      panel_eff     ~ Uniform(0.45, 1.0)               [prev: 0.70-1.0]
+      capacity_j    ~ Uniform(120,000 J, 360,000 J)
+      panel_eff     ~ Uniform(0.45, 1.0)
+      target_alt    ~ Uniform(550 km, 750 km)  [goal-conditioned]
 
     During the episode, hardware degrades progressively (orbit-by-orbit):
-      panel_decay   = 0.0017 per orbit  (→ ~18% drop over 1 week)
-      capacity_decay = 645 J per orbit  (→ ~67 kJ drop over 1 week)
+      panel_decay   = 0.0017 per orbit  (-> ~18% drop over 1 week)
+      capacity_decay = 645 J per orbit  (-> ~67 kJ drop over 1 week)
       Floor: panel_eff >= 0.30, capacity_j >= 80,000 J
 
-6. PHASE 3: MISSION LAYER
+
+6. MISSION LAYER (Phase 3)
 ================================================================================
 
   6.1 Mission Agent (CHRIS Instrument Control)
 
     - Toggles optical payload ON/OFF based on orbital position
-    - Power draw penalty when active (accelerates discharge)
-    - +50.0 reward for valid target imaging (one-shot per pass)
-    - -500.0 penalty for payload ON inside SAA boundaries
-    - Greed prevention: imaging below 30% SoC yields net negative reward
+    - Power draw penalty when active (25W additional)
+    - +100.0 reward for valid target imaging (one-shot per pass)
+    - -200.0 penalty for payload ON inside SAA boundaries
+    - -50.0 sloth penalty: sleeping while SoC>90% over valid target
+    - Greed prevention: imaging below battery safety floor yields -150.0
 
   6.2 Meta-Coordination
 
@@ -221,20 +458,7 @@
     - FDIR governor overrides all agents during DEGRADED/SAFE modes
     - Eclipse conservation: deep sleep forced during ALL eclipse passages
 
-  6.3 FDIR State Machine (C++ Engine)
-
-    State      | SoC Trigger | AI Control
-    -----------|-------------|----------------------------------
-    NOMINAL    | > 20%       | Full autonomy
-    DEGRADED   | < 20%       | Payload OFF, thrust capped at 30%
-    SAFE       | < 10%       | All overridden, deep sleep forced
-    RECOVERY   | > 15%       | Payload OFF, transitioning back
-
-  6.4 C# Power Safety Governor (Multi-Layer)
-
-    The C# governor provides an independent safety layer on top of the
-    C++ engine's FDIR. It runs every simulation step before sending
-    actions to the engine:
+  6.3 C# Power Safety Governor (Multi-Layer)
 
     Layer                | Trigger         | Action
     ---------------------|-----------------|--------------------------------
@@ -243,13 +467,12 @@
     Eclipse Conservation | in_eclipse == 1 | Force deep sleep + payload off
     FDIR Passthrough     | SAFE mode       | Full override (deep sleep)
 
-    Eclipse Conservation is the primary defense against late-life battery
-    death. During eclipse (zero solar input), deep sleep reduces bus power
-    from 30W to 5W, cutting eclipse energy consumption by 83%:
-      Without: 30W x 2100s = 63,000 J per eclipse (22% of degraded battery)
-      With:     5W x 2100s = 10,500 J per eclipse ( 3.7% of degraded battery)
+    Eclipse Conservation reduces eclipse drain by 83%:
+      Without: 30W x 2100s = 63,000 J per eclipse
+      With:     5W x 2100s = 10,500 J per eclipse
 
-7. PHASE 4: C# CONTROLLER
+
+7. C# CONTROLLER (Phase 4)
 ================================================================================
 
   7.1 Architecture
@@ -258,10 +481,11 @@
     - P/Invoke bindings to smas_engine.dll with [StructLayout(Pack=1)]
     - ONNX Runtime inference for 3 agent models (nav, bus, mission)
     - Async WebSocket binary server on ws://localhost:8765
+    - Input tensor: [1, 37] float32 (was [1, 29])
 
   7.2 Binary Telemetry Protocol
 
-    [Version(1B) | Sequence(4B) | PayloadLen(4B) | Payload(98B) | CRC32(4B)]
+    [Version(1B) | Sequence(4B) | PayloadLen(4B) | Payload(202B) | CRC32(4B)]
 
     - Circular buffer (32 frames) for backpressure management
     - Stochastic network impairment (delay, jitter, packet drops)
@@ -281,13 +505,15 @@
   7.4 Observation Normalizer
 
     - Exact C# port of Python's observation.py
-    - 29-dim normalized vector (MinMax, Robust, log10, one-hot)
-    - ABI validated at startup: StatePacket=184B, ActionPacket=19B
+    - 37-dim normalized vector (MinMax, Robust, log10, one-hot)
+    - Includes fuel, thermal, target altitude features
+    - ABI validated at startup: StatePacket=202B, ActionPacket=20B
 
-8. PHASE 5: WEBGPU DASHBOARD
+
+8. WEBGPU DASHBOARD (Phase 5)
 ================================================================================
 
-  8.1 Technology: Vite + React 19 + TypeScript
+  8.1 Technology: Vite + React 18 + TypeScript
 
   8.2 Rendering Engine
 
@@ -298,12 +524,9 @@
 
   8.3 Dynamic SAA Heatmap
 
-    Previous: Heatmap sampled from static UV coordinates, appearing as a
-    "sticker" fixed to the sphere mesh regardless of Earth rotation.
-
-    Fixed: Both WebGPU and WebGL shaders now compute geographic UV
-    coordinates from the vertex's local position and the Earth rotation
-    angle uniform, so the heatmap remains geo-referenced:
+    Both WebGPU and WebGL shaders compute geographic UV coordinates from
+    the vertex's local position and the Earth rotation angle uniform, so
+    the heatmap remains geo-referenced as Earth rotates:
       1. Vertex shader passes local position (vLocalPos) to fragment shader
       2. Fragment shader undoes Earth rotation: geoPos = rotateY(-angle) * localPos
       3. Computes geoLat/geoLon from geoPos
@@ -316,18 +539,21 @@
     - Directly decodes binary WebSocket stream to React state
     - No JSON parsing overhead
     - Auto-reconnect WebSocket: retries every 2 seconds
+    - Currently parses 184B payload (needs update to 202B for Phase A)
 
   8.5 HUD Design
 
     - Deep-space glassmorphism theme (backdrop blur, dark gradients)
     - Dynamic FDIR state indicators with pulse animations
     - Mission Lifetime counter: displays elapsed time as Xy Xd Xh format
-    - SATELLITE DECEASED indicator with cause (reentry/battery/comms)
+    - SATELLITE DECEASED indicator with cause (reentry/battery/comms/fuel/seu)
     - Real-time SoC, altitude, agent actions, environment status
     - FDIR-colored satellite: blue (nominal), green (payload ON),
       amber (degraded), red (safe mode)
+    - Pending: fuel gauge, temperature cards, heater LED (Step 2 in PLAN)
 
-9. PHASE 6: VALIDATION WITH REAL TLE DATA
+
+9. VALIDATION WITH REAL TLE DATA (Phase 6)
 ================================================================================
 
   9.1 Methodology
@@ -339,14 +565,13 @@
 
   9.2 Density Multiplier Calibration
 
-    Multiplier | MSE (km^2) | Use Case
-    -----------|------------|-----------------------------
-    0.01x      | N/A        | Long-term realism (20+ yr)
-    0.10x      | 336.5      | Best 30-day accuracy
-    0.25x      | 438.4      | -
-    0.50x      | 619.3      | -
-    0.75x      | 860.5      | -
-    1.00x      | 1145.3     | Raw model (overestimates)
+    Multiplier | MSE (km^2)  | RMSE (km) | Use Case
+    -----------|-------------|-----------|-----------------------------
+    0.01x      | N/A         | N/A       | Long-term realism (20+ yr)
+    0.10x      | 336.5       | 18.3      | Best 30-day accuracy
+    0.25x      | 438.4       | 20.9      | -
+    0.50x      | 619.3       | 24.9      | -
+    1.00x      | 1145.3      | 33.8      | Raw model (overestimates)
 
   9.3 Dual Calibration Strategy
 
@@ -360,6 +585,7 @@
       Matches real PROBA-1 behavior (24-year operational life at ~600 km).
       Set as the default for operational simulations.
 
+
 10. POST-DEPLOYMENT DEBUGGING & ENGINE HARDENING
 ================================================================================
 
@@ -367,218 +593,267 @@
 
     The satellite's lifetime was systematically extended from 442 days to
     13+ years through iterative telemetry analysis and targeted fixes.
-    Each failure mode was identified, root-caused, and eliminated:
 
-    Run 1 — 442 days (1y 77d) → BATTERY DEPLETED
-      Root cause: Panel efficiency degraded to 58% (σ=0.0001/step too fast)
-      At 58% panels: solar output = 52.2W < payload + bus draw (55W)
-      → AI could not sustain payload; battery drained orbit-by-orbit
-      Fix: Reduced PANEL_DRIFT_SIGMA to 0.00003/step (3.3x slower)
+    Run | Lifetime         | Cause            | Root Cause & Fix
+    ----|------------------|------------------|-----------------------------------------
+    1   | 1y 77d (442d)    | Battery depleted | Panel drift too fast (sigma 0.0001)
+        |                  |                  | Fix: sigma -> 0.00003 (3.3x slower)
+    2   | 1y 251d (616d)   | Battery depleted | Arrhenius aging too aggressive
+        |                  |                  | Fix: BATT_CYCLE_DEGRAD 5e-5 -> 2e-5
+    3   | 1y 270d (635d)   | Battery depleted | Eclipse drain without deep sleep
+        |                  |                  | Fix: Force deep sleep ALL eclipses
+    4   | 6y 6d (2197d)    | SEU Fatal        | Fatal SEU rate too high (0.01)
+        |                  |                  | Fix: Rate -> 0.0001 (100x reduction)
+    5   | 13y 48d (4796d)  | Battery EOL      | LEGITIMATE end-of-life (NOT bug)
+        |                  |                  | 71k cycles, capacity = 1.9% -> natural
 
-    Run 2 — 616 days (1y 251d) → BATTERY DEPLETED
-      Root cause: Battery Arrhenius degradation too aggressive
-      After 9,262 cycles: remaining capacity = 7.4% (only 26 kJ)
-      A single eclipse required 63 kJ → impossible to survive
-      Fix: BATT_CYCLE_DEGRAD 0.00005→0.00002, BATT_THERMAL_FACT 0.001→0.00005
+  10.2 All Fixes Applied (17 Total)
 
-    Run 3 — 635 days (1y 270d) → BATTERY DEPLETED
-      Root cause: Eclipse drain on degraded battery (no eclipse sleep)
-      After 9,525 cycles, capacity ≈ 284 kJ (79% remaining — acceptable)
-      But AI kept payload ON (55W) during sunlight, then entered eclipse
-      with 0W solar and 30W bus draw → 63,000 J drain per eclipse
-      Fix: Eclipse conservation governor — force deep sleep during ALL eclipses
-           Reduced eclipse drain: 30W→5W (83% reduction, 10,500 J/eclipse)
-
-    Run 4 — 2,197 days (6y 6d) → SEU FATAL (RADIATION)
-      Root cause: Fatal SEU probability too high (0.00001/step)
-      Over 37.8M steps: 378 independent fatal rolls → guaranteed death
-      Math: P(survive 6yr) = (1 - 0.00001)^37.8M ≈ 0%
-      Fix: Reduced fatal SEU rate 100x (0.01→0.0001 of base rate)
-           New cap: 0.001 max probability (was 0.01)
-           New math: ~2% chance of fatal SEU over 20 years
-
-    Run 5 — 4,796 days (13y 48d) → BATTERY DEPLETED (Genuine End-of-Life)
-      Root cause: LEGITIMATE battery end-of-life — NOT a bug
-      After ~71,274 charge cycles:
-        Σ loss = 0.00002 × (71274 + 0.00005 × 71274²/2) = 3.97
-        Remaining capacity = e^(-3.97) ≈ 1.9% → only 6,840 J
-        Eclipse requires: 5W × 2100s = 10,500 J > 6,840 J
-      → Battery physically cannot survive a single eclipse. Natural death.
-      Panel efficiency at death: 80.7% (still healthy)
-      This matches expected Li-ion cycle life behavior.
-
-  10.2 Fixes Applied (Chronological)
-
-    Fix | File                          | Change                                      | Impact
-    ----|-------------------------------|---------------------------------------------|------------------
-    1   | constants.h                   | BATT_CYCLE_DEGRAD: 0.00005 → 0.00002        | 2.5x slower aging
-    2   | constants.h                   | BATT_THERMAL_FACT: 0.001 → 0.00005           | 20x less accel.
-    3   | constants.h                   | PANEL_DRIFT_SIGMA: 0.0001 → 0.00003          | 3.3x slower drift
-    4   | stochastic.cpp                | Secular panel loss: 1e-8 → 2e-9 per step     | 5x slower aging
-    5   | config.py                     | min_panel_eff: 0.40 → 0.30                   | Wider training
-    6   | config.py                     | min_capacity_j: 100,000 → 80,000 J           | Extreme aging
-    7   | env_wrapper.py                | panel_eff range: [0.70,1.0] → [0.45,1.0]     | Better coverage
-    8   | env_wrapper.py                | capacity range: [200k,360k] → [120k,360k]    | Better coverage
-    9   | FdirGovernor.cs               | Payload-off threshold: 50% → 60% SoC          | Bigger margin
-    10  | FdirGovernor.cs               | Eclipse conservation: force deep sleep         | 83% drain cut
-    11  | train.py + InferenceEngine.cs | 5% throttle deadband                          | No micro-thrust
-    12  | reward.py                     | w_fatal: 500 → 50,000                         | No reward hack
-    13  | WebGLContext.ts               | Dynamic heatmap: geo UV from earth rotation    | Visual fix
-    14  | WebGPUContext.ts              | Dynamic heatmap: same fix for WebGPU path      | Visual fix
-    15  | stochastic.cpp                | Fatal SEU rate: 0.01→0.0001 of base rate       | 100x less fatal
-    16  | Dashboard.tsx                 | Added 'SEU FATAL (RADIATION)' label for code 4 | UX fix
-    17  | MusicPlayer.tsx + vite.config | Ambient music player (bottom-right corner)      | Feature add
+    #  | File                    | Change                              | Impact
+    ---|-------------------------|-------------------------------------|------------------
+    1  | constants.h             | BATT_CYCLE_DEGRAD: 5e-5 -> 2e-5    | 2.5x slower aging
+    2  | constants.h             | BATT_THERMAL_FACT: 1e-3 -> 5e-5    | 20x less accel.
+    3  | constants.h             | PANEL_DRIFT_SIGMA: 1e-4 -> 3e-5    | 3.3x slower drift
+    4  | stochastic.cpp          | Secular panel loss: 1e-8 -> 2e-9   | 5x slower aging
+    5  | config.py               | min_panel_eff: 0.40 -> 0.30        | Wider training
+    6  | config.py               | min_capacity_j: 100k -> 80k J      | Extreme aging
+    7  | env_wrapper.py          | panel_eff: [0.70,1.0] -> [0.45,1.0]| Better coverage
+    8  | env_wrapper.py          | capacity: [200k,360k] -> [120k,360k]| Better coverage
+    9  | FdirGovernor.cs         | Payload-off SoC: 50% -> 60%        | Bigger margin
+    10 | FdirGovernor.cs         | Eclipse: force deep sleep           | 83% drain cut
+    11 | train.py/Inference      | 5% throttle deadband                | No micro-thrust
+    12 | reward.py               | w_fatal: 500 -> 50,000              | No reward hack
+    13 | WebGLContext.ts         | Dynamic heatmap geo UV              | Visual fix
+    14 | WebGPUContext.ts        | Same fix for WebGPU path            | Visual fix
+    15 | stochastic.cpp          | Fatal SEU rate: 0.01 -> 0.0001      | 100x less fatal
+    16 | Dashboard.tsx           | SEU FATAL label for code 4          | UX fix
+    17 | MusicPlayer.tsx         | Ambient music player                | Feature add
 
   10.3 Confirmed Not Bugs
 
     - RK4 integrator: correct 4th-order integration, J2 perturbation valid
     - Drag model: correct atmospheric co-rotation, physically sound
-    - ABI alignment: StatePacket=184B, ActionPacket=19B — verified both sides
-    - FDIR state machine: correct hysteresis thresholds for up/down transitions
-    - Density multiplier: consistent 0.01 between Python training and C# ops
+    - ABI alignment: StatePacket=202B, ActionPacket=20B — verified all sides
+    - FDIR state machine: correct hysteresis thresholds
+    - Density multiplier: consistent 0.01 between Python and C#
     - 13y battery death: genuine end-of-life, not a code error
+
 
 11. RESULTS & METRICS
 ================================================================================
 
-  11.1 Engine Performance (24-hour run, density_multiplier=0.01)
-
-    Metric              | Value
-    --------------------|------------------
-    Final Altitude      | 632.28 km
-    Battery SoC         | 94.90%
-    Panel Efficiency    | 99.55%
-    Drag Coefficient    | 2.3494 (drifted)
-    Charge Cycles       | 16
-    FDIR Mode           | NOMINAL
-    Eclipse Steps       | 6,227 (36.0%)
-    FDIR Overrides      | 604 (3.5%)
-    Payload ON          | 9,797 steps (56.7%)
-
-  11.2 Operational Simulation — Lifetime Progression
+  11.1 Operational Simulation — Lifetime Progression
 
     Version | Key Changes                         | Lifetime     | Cause of Death
     --------|-------------------------------------|--------------|-------------------
-    v1.0    | Baseline (Phase 3 complete)         | 1y 77d       | Battery (panel aging)
+    v1.0    | Baseline (Phase 3 complete)         | 1y 77d       | Battery (panel)
     v1.1    | Battery Arrhenius fix               | 1y 251d      | Battery (Arrhenius)
-    v1.2    | Panel drift calibration             | 1y 270d      | Battery (eclipse drain)
-    v1.3    | Eclipse deep sleep + SoC thresholds | 6y 6d        | SEU Fatal (radiation)
+    v1.2    | Panel drift calibration             | 1y 270d      | Battery (eclipse)
+    v1.3    | Eclipse deep sleep + SoC thresholds | 6y 6d        | SEU Fatal
     v1.4    | SEU fatal rate fix (100x reduction) | 13y 48d      | Battery (genuine EOL)
-    v1.5    | 10-year window test                 | 9y 362d ✅   | SURVIVED (window end)
+    v1.5    | 10-year window test                 | 9y 362d      | SURVIVED (window end)
 
-    Total lifetime improvement: 442 days → 4,796 days = 10.85x increase
+    Total lifetime improvement: 442 days -> 4,796 days = 10.85x increase
 
-  11.3 Best Survival Run — 10 Year Window (session_20260430_191948.csv)
-
-    The satellite SURVIVED the full 10-year simulation window.
-    The simulation ended because --steps 63072000 was reached, not death.
+  11.2 Best Survival Run — 10 Year Window
 
     Metric              | Value
     --------------------|------------------
     Total Steps         | 63,070,000
-    Simulation Time     | 87,597.2 hours (3,650 days / 9y 362d)
+    Simulation Time     | 9y 362d
     Final Altitude      | 554.3 km
-    Final SoC           | 100%   ✅
-    Final FDIR          | NOMINAL ✅
-    Panel Efficiency    | 92.8%  ✅
+    Final SoC           | 100%   (healthy)
+    Final FDIR          | NOMINAL
+    Panel Efficiency    | 92.8%
     Drag Coefficient    | 1.61 (drifted from 2.2)
-    Payload ON          | Running normally
-    Eclipse Steps       | ~32%
-    Done Reason         | NONE — satellite still alive and healthy
+    Done Reason         | NONE — satellite still alive
 
-  11.4 Longest Run — 13 Year Battery EOL (session_20260430_233245.csv)
+  11.3 Longest Run — 13 Year Battery EOL
 
     Metric              | Value
     --------------------|------------------
     Total Steps         | 82,875,446
-    Simulation Time     | 115,104.8 hours (4,796 days / 13y 48d)
+    Simulation Time     | 13y 48d (4,796 days)
     Final Altitude      | 568.0 km
     Final SoC           | 0%
     Final FDIR          | SAFE
-    Panel Efficiency    | 80.7%  ← panels still healthy
-    Drag Coefficient    | 2.46
-    Charge Cycles       | ~71,274 (estimated)
+    Panel Efficiency    | 80.7% (panels still healthy)
+    Charge Cycles       | ~71,274
     Payload ON          | 15.5% (reduced by AI as battery aged)
-    Eclipse Steps       | 32.2%
-    FDIR Overrides      | 10.9%
     Done Reason         | BatteryDead (genuine end-of-life)
 
     Battery EOL Analysis:
-      Remaining capacity = e^(-3.97) ≈ 1.9% of 360 kJ = 6,840 J
-      Eclipse requirement = 5W × 2100s = 10,500 J
-      → Cannot survive ONE eclipse. This is natural battery death.
+      Remaining capacity = e^(-3.97) ~ 1.9% of 360 kJ = 6,840 J
+      Eclipse requirement = 5W x 2100s = 10,500 J
+      -> Cannot survive ONE eclipse. Natural battery death.
 
-  11.5 Complete Run History (All Significant Sessions)
+  11.4 Phase A Training Results (2026-05-22, obs_dim=37)
+
+    Training: Phase 2, 100M total_steps, 16 envs, CPU
+    Episode length: 120,960 steps (~1 week), target_alt random [550, 750] km
+
+    Ep  | Steps       | Reward       | SoC   | Alt    | Fuel  | Temp  | FDIR
+    ----|-------------|-------------|-------|--------|-------|-------|-----
+    6   | 11,628,288  | +754,332    | 96.7% | 580.6  | 100%  | 19.3  | 0
+    10  | 19,380,480  | -1,323,487  | 95.3% | 580.6  | 100%  | 19.3  | 0
+    16  | 31,008,768  | -9,240,651  | 94.6% | 580.6  | 100%  | 19.3  | 0
+
+    Observations:
+      - Satellite SURVIVES all episodes (SoC stable, FDIR nominal)
+      - Fuel = 100% in all episodes (agent learned coast-first strategy)
+      - Reward variance high due to random target_alt:
+        target near 580km -> positive reward (ep6: +754K)
+        target far (700km) -> negative reward (ep13: -35M)
+      - Agent has not yet learned efficient Hohmann transfer for altitude changes
+      - Entropy increasing (7.1 -> 11.6) suggests more training needed
+
+  11.5 Live Simulation Test (2026-05-22, target=700km, atm_density=0.315)
+
+    Result: SATELLITE DECEASED after 351d 5h 26m
+    Cause: CODE 5 (FUEL_DEPLETED_LOW)
+    Analysis: Agent thrust toward 700km, burned all fuel inefficiently,
+              high drag (0.315x) accelerated orbital decay -> fell below 400km.
+              Note: atm_density 0.315 is ~31x above calibrated value (0.01).
+
+  11.6 Complete Run History
 
     Session                  | Lifetime | Steps      | Death Cause
     -------------------------|----------|------------|-------------------
-    session_20260430_191948   | 9y 362d  | 63,070,000 | SURVIVED ✅
+    session_20260430_191948   | 9y 362d  | 63,070,000 | SURVIVED
     session_20260430_233245   | 13y 48d  | 82,875,446 | Battery EOL
     session_20260430_171546   | 6y 5d    | 37,950,167 | SEU Fatal
+    session_20260522 (700km)  | 0y 351d  | ~6,060,000 | Fuel Depleted
     session_20260426_143141   | 1y 272d  | 11,007,410 | Battery
     session_20260430_032600   | 1y 251d  | 10,652,079 | Battery
     session_20260426_172356   | 1y 159d  | 9,070,997  | Battery
     session_20260427_001115   | 1y 39d   | 6,985,515  | Reentry
     session_20260425_190309   | 0y 153d  | 2,654,508  | Reentry
 
-  11.6 Build Verification
-
-    Component           | Status
-    --------------------|--------
-    C++ Engine (MSVC)   | PASS (0 errors, 2 warnings: unused r5, mass_kg)
-    Python ctypes ABI   | PASS (State=184B, Action=19B)
-    C# Integration      | PASS (dotnet build -c Release: 0 errors)
-    Frontend Build      | PASS (npm run dev, hot reload active)
-    TLE Validation      | PASS (MSE=336.5 at 0.1x)
-    Music Player        | PASS (Vite plugin serves ../music/ folder)
 
 12. KNOWN LIMITATIONS
 ================================================================================
 
   1. Atmospheric model is a simplified NRLMSISE-00 approximation, not the
-     full empirical model. Uses dual calibration (0.1 for short-term,
-     0.01 for long-term realism).
-  2. Training convergence requires substantial compute (>1M steps for
-     meaningful policy improvement). Current agents exhibit orbit-raising
-     behavior that reduces long-term stability.
-  3. Single-satellite simulation. Constellation expansion (4 satellites)
-     is planned — see PLAN.txt for full implementation roadmap.
-  4. WebGPU support requires modern browsers (Chrome/Edge 113+).
-  5. The C++ engine does not include SGP4 propagation internally; it uses
-     Keplerian initialization + numerical RK4 integration.
-  6. The modular algorithm design (GUIDE.md) allows swapping MAPPO for
-     MADDPG, QMIX, IPPO, HAPPO, or other MARL algorithms by editing
-     only 2 files (mappo.py + train.py imports).
-  7. Missing subsystems for real deployment: thermal model, attitude
-     dynamics (ADCS), propellant budget, higher-fidelity gravity model.
-     Full roadmap documented in UPDATE.txt.
+     full empirical model. Uses dual calibration (0.1 short-term, 0.01 long-term).
+  2. No attitude dynamics (ADCS) — sun angle approximated, no quaternion state.
+     Planned for Step 4 in PLAN.txt with sub-stepping for dt=5s.
+  3. dt=5s timestep: thruster min burn = 5s (real ~0.1-1s), eclipse transition
+     only 4 steps. ADCS will require sub-stepping (5x1s per main step).
+  4. Single-satellite simulation. 4-satellite constellation planned (Step 6).
+  5. Agent has not learned efficient orbital transfer (Hohmann maneuver).
+     Currently uses brute-force thrust which depletes fuel unnecessarily.
+  6. Goal-conditioned training (550-750 km) creates high reward variance.
+     Agent optimized for ~600 km natural orbit, poor at reaching 700+ km.
+  7. WebGPU dashboard not yet updated for Phase A fields (fuel, thermal).
+  8. Old ONNX models incompatible with obs_dim=37. Retraining in progress.
+  9. WebGPU support requires modern browsers (Chrome/Edge 113+).
+  10. The C++ engine does not include SGP4 internally; uses Keplerian
+      initialization + numerical RK4 integration.
 
-13. FUTURE WORK
+
+13. PROJECT FILES
 ================================================================================
 
-  Phase A — Extend Lifetime to 20+ Years (AI-Driven):
-  • Add cycle-count penalty to reward function (reduce charge cycles)
-  • DoD-dependent degradation (shallow cycles = less damage)
-  • Remove governor eclipse override, let AI learn it through training
-  • Age-adaptive payload scheduling (reduce payload as battery ages)
-  • Curriculum training (progressive aging: 100%→60%→30% battery start)
+  backend_cpp/
+    include/
+      types.h              — Vec3, GeoCoord, SimTime, compat shims
+      constants.h          — Physical constants (orbit, power, fuel, thermal)
+      contracts.h          — StatePacket (202B v2), ActionPacket (20B v1)
+      data_loader.h        — CSV/JSON/TLE parsers
+      atmosphere.h         — NRLMSISE-00 simplified model
+      geometry.h           — Eclipse, LoS, solar ephemeris, beta angle
+      orbital_mechanics.h  — J2 gravity, drag, thrust, RK4
+      satellite_bus.h      — Power, battery, degradation, fuel tracking
+      stochastic.h         — Noise, SEU, actuator delay, drift
+      thermal.h            — 3-node lumped thermal model (NEW)
+      simulation_engine.h  — Master orchestrator
+      c_api.h              — 13 exported C functions
+    src/
+      data_loader.cpp, atmosphere.cpp, geometry.cpp,
+      orbital_mechanics.cpp, satellite_bus.cpp, stochastic.cpp,
+      thermal.cpp (NEW), simulation_engine.cpp, c_api.cpp, main.cpp
 
-  Phase B — Minimum Flight-Ready:
-  • Propellant budget and finite fuel tracking (Tsiolkovsky model)
-  • Thermal subsystem (battery temperature-dependent capacity)
-  • Monte Carlo validation campaign (1000+ random seeds)
+  marl_python/
+    config.py              — All hyperparameters (obs_dim=37)
+    env_wrapper.py         — ctypes bridge (202B/20B)
+    observation.py         — 37-dim normalization
+    reward.py              — 16-component reward (survival + mission)
+    mappo.py               — SharedActorCritic, RolloutBuffer, PPO
+    train.py               — Training loop (Phase 2/3)
+    export_onnx.py         — ONNX export (nav/bus/mission)
+    validate_tle.py        — SGP4 comparison
 
-  Phase C — Operational Fidelity:
-  • Attitude dynamics (ADCS, quaternion-based, sun-angle-dependent power)
-  • Communication data buffer model
-  • 4-satellite constellation (shared policy, independent engines)
+  controller_csharp/
+    Interop/
+      Contracts.cs         — StatePacket (202B v2), ActionPacket (20B)
+      EngineApi.cs         — P/Invoke declarations
+    AI/
+      ObservationBuilder.cs — 37-dim C# port
+      InferenceEngine.cs   — 3 ONNX sessions
+    Governor/
+      FdirGovernor.cs      — 4-mode safety governor
+    Telemetry/
+      TelemetryPacket.cs   — Binary serializer
+      WebSocketServer.cs   — ws://localhost:8765
+      NetworkImpairment.cs — Delay/drop simulator
+      TelemetryLogger.cs   — CSV logger
+      ReplayEngine.cs      — Offline replay
+    Program.cs             — Main orchestrator (3 run modes)
 
-  Phase D — Full Realism:
-  • High-fidelity gravity (J2-J6 + lunar/solar third-body)
-  • Cooperative constellation (peer attention, inter-satellite comms)
-  • Onboard software constraints (INT8 quantization, compute budget)
+  frontend_webgpu/
+    src/
+      lib/telemetry.ts     — Binary decoder + useTelemetry hook
+      engine/Renderer.ts   — Animation loop
+      engine/WebGPUContext.ts — WGSL pipeline
+      engine/WebGLContext.ts  — WebGL2 fallback
+      components/Dashboard.tsx — Glassmorphism HUD
+      components/GroundControlPanel.tsx — Presets & controls
 
-14. REFERENCES
+
+14. FUTURE WORK (See PLAN.txt for full details)
+================================================================================
+
+  Step 1: Retrain (obs_dim 37)      — IN PROGRESS, code complete
+  Step 2: Frontend fuel/thermal     — Dashboard updates for Phase A
+  Step 3: Continuous V&V            — Monte Carlo, worst-case, CI/CD
+  Step 4: ADCS (attitude dynamics)  — Quaternion, reaction wheels, sub-stepping
+  Step 5: Onboard compute limits    — INT8/FP16 quantisation, watchdog
+  Step 6: 4-Satellite constellation — Independent then cooperative
+  Step 7: Phase B (comms, eclipse)  — Link budget, penumbra model
+  Step 8: Phase C (gravity, atmo)   — J3-J6, Dst, debris avoidance
+
+  Estimated total: 14-24 weeks (single developer)
+  Current TRL: 3-4 -> Target TRL: 6
+
+
+15. BUILD COMMANDS
+================================================================================
+
+  C++ Engine (64-bit MSVC 18 / 2026):
+    cd "E:\Satellite LEO\backend_cpp"
+    Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+    mkdir build
+    cmd.exe /c " ""C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"" && cd /d ""E:\Satellite LEO\backend_cpp\build"" && cmake -G ""NMake Makefiles"" -DCMAKE_BUILD_TYPE=Release .. && nmake "
+    .\build\smas_test.exe "..\preprocessed-data" 10
+
+  Python Training:
+    cd "E:\Satellite LEO\marl_python"
+    python train.py --phase 2 --total_steps 100000000 --device cpu
+    python train.py --phase 3 --total_steps 100000000 --device cpu --resume checkpoints/mappo_phase2_best.pt
+    python export_onnx.py --checkpoint checkpoints/mappo_phase3_best.pt
+
+  C# Controller:
+    cd "E:\Satellite LEO\controller_csharp"
+    dotnet build -c Release
+    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models"
+    dotnet run -c Release -- --data-dir "..\preprocessed-data" --model-dir "models" --skip 100
+
+  Frontend:
+    cd "E:\Satellite LEO\frontend_webgpu"
+    npm run dev
+
+
+16. REFERENCES
 ================================================================================
 
   [1] Picone, J.M. et al., "NRLMSISE-00 empirical model of the atmosphere",
@@ -592,5 +867,11 @@
   [6] WebGPU Specification: https://www.w3.org/TR/webgpu/
   [7] NASA Battery Cycle Life Data: https://www.nasa.gov/offices/oce/llis
   [8] Heynderickx, D., "Radiation Belt Models for SPENVIS", 2001.
+  [9] Tsiolkovsky, K.E., "The Exploration of Cosmic Space by Means of
+      Reaction Devices", 1903. (Rocket equation)
+  [10] Gilmore, D.G., "Spacecraft Thermal Control Handbook", 2nd ed., 2002.
+       (Lumped thermal node methodology)
 
-
+================================================================================
+  END OF REPORT — Version 3.0 (2026-05-23)
+================================================================================

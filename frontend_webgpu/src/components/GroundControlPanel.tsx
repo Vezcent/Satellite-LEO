@@ -95,15 +95,20 @@ export default function GroundControlPanel({ sendCommand, connected }: Props) {
     setTimeout(() => setEnvApplied(false), 2000);
   }, [seuMult, noiseMult, driftMult, densityMult, sendCommand]);
 
-  const applyPreset = useCallback((preset: 'nominal' | 'storm' | 'worst') => {
+  const applyPreset = useCallback((preset: 'nominal' | 'storm' | 'worst' | 'solarmax' | 'halloween' | 'fuel_critical' | 'cold_eclipse') => {
     let s = 1, n = 1, d = 1, dens = 0.01;
     switch (preset) {
       case 'nominal': break;
       case 'storm':  s = 50; dens = 0.1; break;
       case 'worst':  s = 100; n = 3; d = 5; dens = 0.5; break;
+      case 'solarmax': s = 5; n = 1.2; d = 1.5; dens = 0.3; break;
+      case 'halloween': s = 100; n = 2.0; d = 1.2; dens = 0.15; break;
+      case 'fuel_critical': s = 1; n = 1; d = 1; dens = 0.01; break;
+      case 'cold_eclipse': s = 1; n = 1.2; d = 1; dens = 0.01; break;
     }
     setSeuMult(s); setNoiseMult(n); setDriftMult(d); setDensityMult(dens);
     setActivePreset(preset);
+    
     sendCommand({
       type: 'environment_tuning',
       environment: {
@@ -113,6 +118,14 @@ export default function GroundControlPanel({ sendCommand, connected }: Props) {
         densityMultiplier: dens,
       },
     });
+
+    if (preset === 'solarmax' || preset === 'halloween' || preset === 'fuel_critical' || preset === 'cold_eclipse') {
+      sendCommand({
+        type: 'preset',
+        presetName: preset
+      } as any);
+    }
+
     setEnvApplied(true);
     setTimeout(() => setEnvApplied(false), 2000);
   }, [sendCommand]);
@@ -255,27 +268,43 @@ export default function GroundControlPanel({ sendCommand, connected }: Props) {
             {/* Active Environment Badge */}
             <div className="gcp-section">
               <div className={`gcp-env-badge ${envApplied ? 'gcp-env-flash' : ''} ${
-                activePreset === 'worst' ? 'gcp-env-danger' :
-                activePreset === 'storm' ? 'gcp-env-warn' : 'gcp-env-ok'
+                activePreset === 'worst' || activePreset === 'halloween' ? 'gcp-env-danger' :
+                activePreset === 'storm' || activePreset === 'solarmax' || activePreset === 'fuel_critical' ? 'gcp-env-warn' : 'gcp-env-ok'
               }`}>
                 <span className="gcp-env-dot" />
                 <span>{envApplied ? '✓ APPLIED' :
                   activePreset === 'worst' ? '⚠ WORST CASE ACTIVE' :
                   activePreset === 'storm' ? '⚠ SOLAR STORM ACTIVE' :
+                  activePreset === 'solarmax' ? '⚠ SOLAR MAX ACTIVE' :
+                  activePreset === 'halloween' ? '⚠ HALLOWEEN STORM ACTIVE' :
+                  activePreset === 'fuel_critical' ? '⚠ FUEL CRITICAL ACTIVE' :
+                  activePreset === 'cold_eclipse' ? '⚠ COLD ECLIPSE ACTIVE' :
                   activePreset === 'custom' ? '⚙ CUSTOM ENV ACTIVE' :
                   '● NOMINAL'}</span>
               </div>
             </div>
-            {/* Presets */}
-            <div className="gcp-section gcp-presets">
-              <button className="gcp-btn gcp-btn-preset gcp-preset-nom" onClick={() => applyPreset('nominal')}>
+            {/* Presets Grid */}
+            <div className="gcp-section gcp-presets" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.4rem' }}>
+              <button className={`gcp-btn gcp-btn-preset ${activePreset === 'nominal' ? 'active' : ''}`} onClick={() => applyPreset('nominal')}>
                 🟢 Nominal
               </button>
-              <button className="gcp-btn gcp-btn-preset gcp-preset-storm" onClick={() => applyPreset('storm')}>
+              <button className={`gcp-btn gcp-btn-preset ${activePreset === 'storm' ? 'active' : ''}`} onClick={() => applyPreset('storm')}>
                 🟡 Solar Storm
               </button>
-              <button className="gcp-btn gcp-btn-preset gcp-preset-worst" onClick={() => applyPreset('worst')}>
+              <button className={`gcp-btn gcp-btn-preset ${activePreset === 'worst' ? 'active' : ''}`} onClick={() => applyPreset('worst')}>
                 🔴 Worst Case
+              </button>
+              <button className={`gcp-btn gcp-btn-preset ${activePreset === 'solarmax' ? 'active' : ''}`} onClick={() => applyPreset('solarmax')}>
+                🔥 Solar Max
+              </button>
+              <button className={`gcp-btn gcp-btn-preset ${activePreset === 'halloween' ? 'active' : ''}`} onClick={() => applyPreset('halloween')}>
+                🎃 Halloween
+              </button>
+              <button className={`gcp-btn gcp-btn-preset ${activePreset === 'fuel_critical' ? 'active' : ''}`} onClick={() => applyPreset('fuel_critical')}>
+                ⛽ Fuel Critical
+              </button>
+              <button className={`gcp-btn gcp-btn-preset ${activePreset === 'cold_eclipse' ? 'active' : ''}`} onClick={() => applyPreset('cold_eclipse')}>
+                ❄️ Cold Eclipse
               </button>
             </div>
 

@@ -39,6 +39,21 @@ export interface TelemetryData {
   deepSleep: boolean;
   payloadOn: boolean;
   fdirOverridden: boolean;
+
+  // Phase A Subsystems (Fuel & Thermal)
+  fuelFraction: number;    // 0.0 - 1.0
+  fuelDepleted: boolean;
+  tempBus: number;         // °C
+  tempBattery: number;     // °C
+  tempPayload: number;     // °C
+  heaterOn: boolean;
+
+  // Phase A ADCS Subsystems (Attitude)
+  sunAngle: number;
+  nadirError: number;
+  wheelMomentumX: number;
+  wheelMomentumY: number;
+  wheelMomentumZ: number;
 }
 
 // ── Ground Command Interface (Frontend → C# Controller) ──────────
@@ -157,13 +172,30 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
       const payloadOn = view.getUint8(offset++) === 1;
       const fdirOverridden = view.getUint8(offset++) === 1;
 
+      // Phase A Subsystems (Fuel & Thermal)
+      const fuelFraction = view.getFloat32(offset, true); offset += 4;
+      const fuelDepleted = view.getUint8(offset++) === 1;
+      const tempBus = view.getFloat32(offset, true); offset += 4;
+      const tempBattery = view.getFloat32(offset, true); offset += 4;
+      const tempPayload = view.getFloat32(offset, true); offset += 4;
+      const heaterOn = view.getUint8(offset++) === 1;
+
+      // Phase A ADCS Subsystem (Attitude)
+      const sunAngle = view.getFloat32(offset, true); offset += 4;
+      const nadirError = view.getFloat32(offset, true); offset += 4;
+      const wheelMomentumX = view.getFloat32(offset, true); offset += 4;
+      const wheelMomentumY = view.getFloat32(offset, true); offset += 4;
+      const wheelMomentumZ = view.getFloat32(offset, true); offset += 4;
+
       setData({
         seq, simTimeS, altitudeKm, latitudeDeg, longitudeDeg,
         batterySoc, solarPowerW, powerDrawW, inEclipse, inSaa,
         fdirMode, seuActive, gsVisible, panelEfficiency, dragCoeff,
         atmDensity, saaFlux10, saaFlux30,
         isDone, doneReason, thrustX, thrustY, thrustZ, throttle,
-        deepSleep, payloadOn, fdirOverridden
+        deepSleep, payloadOn, fdirOverridden,
+        fuelFraction, fuelDepleted, tempBus, tempBattery, tempPayload, heaterOn,
+        sunAngle, nadirError, wheelMomentumX, wheelMomentumY, wheelMomentumZ
       });
     };
   }, [url]);

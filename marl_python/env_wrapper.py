@@ -75,6 +75,12 @@ class StatePacket(ct.Structure):
         ("temp_battery",        ct.c_float),
         ("temp_payload",        ct.c_float),
         ("heater_on",           ct.c_uint8),
+        # ADCS (Phase A ADCS)
+        ("sun_angle",           ct.c_float),
+        ("nadir_error",         ct.c_float),
+        ("wheel_momentum_x",    ct.c_float),
+        ("wheel_momentum_y",    ct.c_float),
+        ("wheel_momentum_z",    ct.c_float),
     ]
 
 
@@ -168,6 +174,9 @@ class SatelliteEnv:
         # smas_get_target_altitude(engine) -> double  (Phase A)
         self._lib.smas_get_target_altitude.argtypes = [ct.c_void_p]
         self._lib.smas_get_target_altitude.restype  = ct.c_double
+        # smas_set_environment(engine, seu_mult, noise_mult, drift_mult, dens_mult) -> void
+        self._lib.smas_set_environment.argtypes = [ct.c_void_p, ct.c_double, ct.c_double, ct.c_double, ct.c_double]
+        self._lib.smas_set_environment.restype  = None
 
     def _create_engine(self):
         data_dir = self.cfg.data_dir.encode("utf-8")
