@@ -50,12 +50,12 @@ def run_monte_carlo(num_seeds=100, max_days=30, policy_type="passive", checkpoin
         # Load checkpoint
         obs_dim = ObsConfig().obs_dim
         policy = SharedActorCritic(obs_dim=obs_dim, cfg=MAPPOConfig())
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         state_dict = checkpoint.get("model_state", checkpoint.get("model_state_dict"))
         policy.load_state_dict(state_dict)
         policy.to(device)
         policy.eval()
-        print("Trained MAPPO policy loaded successfully ✓")
+        print("Trained MAPPO policy loaded successfully [OK]")
 
     obs_builder = ObservationBuilder()
     results = []
