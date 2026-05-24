@@ -219,7 +219,7 @@ def train(train_cfg: TrainConfig,
         print(base)
 
         # Save
-        if episode_count % 50 == 0 or total_steps >= train_cfg.total_timesteps:
+        if episode_count % 1 == 0 or total_steps >= train_cfg.total_timesteps:
             os.makedirs("checkpoints", exist_ok=True)
             path = f"checkpoints/mappo_phase{phase}_ep{episode_count}.pt"
             torch.save({

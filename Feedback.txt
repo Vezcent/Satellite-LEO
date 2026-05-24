@@ -9,3 +9,30 @@ Report errors and optimize the S-MAS training system:
    - Problem: C++ integrates the Attitude module (especially running RK4 stably at 1s through sub-stepping) which slows down the sequential training speed a lot.
    - Solution: Build a `VectorSatelliteEnv` class that uses `ThreadPoolExecutor` to run parallelization at C++ level (ignore GIL in ctypes). 
    - Results: Training speed increased dramatically, reaching more than 4,500 steps/second on CPU. All 2,000,000 steps of Phase 2 and Phase 3 are completed in just over 7 minutes.
+
+
+
+
+1. pi (Policy Loss - Policy Loss / Actor Network)
+Meaning: Index measures the level of change and optimization of the action decision network (Actor). It shows to what extent the new action policy is better than the old policy.
+Characteristics: In the PPO algorithm, this value often fluctuates very small around 0 (can be slightly negative or positive, for example -0.0004).
+If pi suddenly increases too large (large positive or negative), it means that the action policy is being changed too dramatically, easily causing training instability (PPO has a "clipping" mechanism to limit this change).
+
+
+
+2. v (Value Loss - Loss of Value Function / Critic Network)
+Meaning: Index measures the prediction error of the rating network (Critic). The Critic network has the task of predicting: "From the current state, how much total reward points will Agent receive in the future?".
+Characteristics: This value is as small as possible, showing that Critic's prediction is becoming more and more accurate.
+In log: In Ep 1, v is initially 0.0489 and gradually decreases. In Ep 2, when the Agent ran more stably, v dropped to extremely low (only 0.0075), proving that the model clearly understood the value of orbital and battery states.
+
+3. H (Entropy - Chaos / Level of discovery)
+Meaning: Measures the degree of "randomness" or variety in the Agent's actions.
+Characteristic:
+High H: Agent makes random decisions and experiments with many new actions (exploration).
+Low H: Agent becomes rigid, only choosing a few familiar actions over and over again (exploitation).
+Reality: We want H to be high in the early stages so that the Agent can learn a lot, then gradually decrease as the model converges. The fact that  entropy remains at a stable level of 7.1 - 7.4 shows that the Agents are still maintaining the ability to self-learn and explore the environment very well, not falling into repetitive actions too early (avoiding local convergence).
+
+3. Fuel Penalty & Propellant Consumption Exploit Fix:
+   - Error description: The continuous thruster fuel penalty in `reward.py` was calculated as `dv_proxy = thrust_mag * throttle`, where `thrust_mag = sqrt(thrust_x^2 + thrust_y^2 + thrust_z^2)`. However, the C++ physics engine internally normalizes the direction vector using `thrust_dir.normalized()`. This discrepancy created a massive reward exploit: the agents could scale down their thrust direction vectors close to 0 to make `thrust_mag` extremely tiny (almost bypassing the fuel penalty entirely in Python), while physically thrusting at full force and consuming propellant continuously in C++.
+   - Impact: When the target altitude changed (even within the deadband, like 604km, or during climbs to 700km), the agents would continuously fire their thrusters with a small positive throttle (since there was no active penalty to drive it to exactly 0) and completely deplete the satellite's PROPELLANT (FUEL DEPLETED failure).
+   - Fix: Changed `dv_proxy` to be `throttle` directly. This directly maps to physical fuel consumption, is 100% cheat-proof, and forces the agents to learn to coast (benefiting from `w_coast_bonus = 2.0`) instead of continuously burning fuel.

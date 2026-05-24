@@ -130,8 +130,33 @@ These compress ~10 years of aging into a 1-week episode so agents learn to adapt
 | `batch_size` | `config.py:128` | 4096 | scaled for 16 envs |
 | `num_epochs` | `config.py:129` | 2 | PPO backprop passes |
 | `rollout_steps` | `config.py:130` | 1176 | ≈ 1 orbit at dt=5s |
-| `total_timesteps` | `config.py:140` | 1,000,000 | total training budget |
+| `total_timesteps` | `config.py:140` | 1,000,000 | overridden by `--total_steps` (default 40M) in `train.py` |
 | `num_envs` | `config.py:24` | 16 | parallel environments |
+
+---
+
+### 🏃‍♂️ Training Step Configuration & Resume Behavior
+
+#### 1. How Training Steps are Calculated
+When you run training (with or without resuming):
+* **With `--resume <checkpoint>`:** The training script loads the model state and reads the `total_steps` already completed from the checkpoint file. The training loop runs as:
+  ```python
+  while total_steps < train_cfg.total_timesteps:
+      # train...
+  ```
+  So, the actual steps trained in the current run will be: `total_steps_target - total_steps_already_trained`. For example, resuming a checkpoint at `19,380,480` steps with a target of `40,000,000` steps will train for `20,619,520` additional steps.
+* **Without `--resume`:** Training starts at `total_steps = 0` and runs for the full target steps.
+
+#### 2. How to Adjust the Target Steps
+You can change the target steps in three ways:
+1. **Via CLI parameter (Recommended):** Pass the `--total_steps` flag to the command.
+   ```bash
+   python train.py --phase 3 --device cpu --resume checkpoints\mappo_phase3_ep10.pt --total_steps 50000000
+   ```
+2. **Via train.py defaults:** Edit `default=40_000_000` in the `--total_steps` parser option inside the `main()` function of [train.py](file:///E:/Satellite%20LEO/marl_python/train.py#L244).
+3. **Via config.py:** Edit `total_timesteps` in `TrainConfig` inside [config.py](file:///E:/Satellite%20LEO/marl_python/config.py#L140). *Note: You must also modify `train.py` to use `train_cfg.total_timesteps` without overriding it with `args.total_steps`.*
+
+---
 
 ---
 

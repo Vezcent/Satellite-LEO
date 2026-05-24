@@ -63,10 +63,14 @@ class SurvivalReward:
         reward += cfg.w_alive
 
         # ── 2. Fuel penalty (ΔV proxy, scaled by 1/remaining_fuel) ─
+        # CRITICAL FIX: The C++ engine normalizes thrust_dir internally, making the physical thruster force
+        # independent of the agent's thrust vector magnitude (thrust_mag). The old `thrust_mag * throttle`
+        # created a massive reward hack where the agents could shrink their thrust direction vectors close
+        # to 0 to bypass the fuel penalty entirely while still thrusting at full force physically.
+        # We now use the physical thruster activation (`throttle`) directly, which is cheat-proof and 100% physically accurate.
         nav = action.get("nav", np.zeros(4, dtype=np.float32))
         throttle = float(np.clip(nav[3], 0.0, 1.0))
-        thrust_mag = np.sqrt(nav[0]**2 + nav[1]**2 + nav[2]**2)
-        dv_proxy = thrust_mag * throttle
+        dv_proxy = throttle
 
         # Scale fuel penalty by inverse of remaining fuel fraction
         fuel_frac = float(s.fuel_fraction)

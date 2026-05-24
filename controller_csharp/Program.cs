@@ -269,10 +269,12 @@ public static class Program
             if (step % consoleInterval == 0 || state.IsDone == 1)
             {
                 double simHours = state.SimTimeS / 3600.0;
+                double nadirDeg = state.NadirError * (180.0 / Math.PI);
                 Console.WriteLine(
-                    $"  Step {step,6} | {simHours,6:F1}h | Alt={state.AltitudeKm,7:F1}km " +
-                    $"| SoC={state.BatterySoc * 100,5:F1}% | FDIR={FdirGovernor.ModeLabel(state.FdirMode)} " +
-                    $"| Eclipse={state.InEclipse} | SAA={state.InSaa} | Payload={action.PayloadOn}");
+                    $"  Step {step,6} | {simHours,6:F1}h | Alt={state.AltitudeKm,6:F1}km " +
+                    $"| SoC={state.BatterySoc * 100,5:F1}% | Fuel={state.FuelFraction * 100,5:F1}% " +
+                    $"| Temp={state.TempBattery,5:F1}C | FDIR={FdirGovernor.ModeLabel(state.FdirMode)} " +
+                    $"| Eclipse={state.InEclipse} | SAA={state.InSaa} | NadirErr={nadirDeg,4:F1}° | Payload={action.PayloadOn}");
             }
         }
 
