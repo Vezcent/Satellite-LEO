@@ -86,7 +86,7 @@ class RewardConfig:
     w_fdir:  float = 200.0             # penalty when FDIR intervenes
     w_fatal: float = 50000.0           # HUGE penalty on terminal failure
     w_alt: float = 0.3              # was 2.0 — quá lớn, overwhelm learning
-    alt_deadband_km: float = 50.0   # was 25.0 — cho agent thời gian học
+    alt_deadband_km: float = 25.0   # was 25.0 — cho agent thời gian học
     # Phase A: fuel conservation
     w_fuel_critical: float = 500.0     # penalty when fuel < 10%
     w_coast_bonus: float = 2.0         # bonus for coasting (throttle=0, fuel>0)
