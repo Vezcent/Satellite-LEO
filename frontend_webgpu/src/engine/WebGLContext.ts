@@ -58,7 +58,42 @@ vec3 colormap(float x) {
 out vec4 fragColor;
 
 void main() {
-  if (uIsEarth > 0.8) {
+  if (uIsEarth > 1.4) {
+    // MOON — procedural cratered surface
+    vec3 N = normalize(vNormal);
+    vec3 L = normalize(uSunDir);
+    float diff = max(dot(N, L), 0.0);
+    
+    // Procedural craters using layered noise on local normal
+    vec3 p = vLocalNormal * 8.0;
+    float craters = 0.0;
+    float amp = 1.0;
+    for(int i = 0; i < 6; i++) {
+      float n = sin(p.x * 1.7 + p.y * 2.3) * cos(p.y * 1.9 + p.z * 2.7) + sin(p.z * 2.1 + p.x * 1.3);
+      float crater = smoothstep(0.6, 0.8, abs(n));
+      craters += crater * amp;
+      p *= 2.3;
+      amp *= 0.45;
+    }
+    craters = clamp(craters / 2.5, 0.0, 1.0);
+    
+    // Maria (dark plains) vs Highlands
+    vec3 pm = vLocalNormal * 2.0;
+    float maria = sin(pm.x * 1.2) * cos(pm.y * 0.8 + pm.z * 1.5);
+    maria = smoothstep(-0.3, 0.3, maria);
+    
+    vec3 highland = vec3(0.18, 0.17, 0.16);
+    vec3 mariaCol = vec3(0.08, 0.08, 0.07);
+    vec3 moonBase = mix(mariaCol, highland, maria);
+    
+    // Apply craters as darkening
+    moonBase *= (0.7 + 0.3 * craters);
+    
+    // Direct lighting only — no atmosphere
+    vec3 moonColor = moonBase * (0.03 + 0.97 * diff);
+    fragColor = vec4(moonColor, 1.0);
+
+  } else if (uIsEarth > 0.8) {
     vec3 N = normalize(vNormal);
     vec3 L = normalize(uSunDir);
     vec3 V = normalize(-vPosition);
@@ -127,20 +162,13 @@ void main() {
     // Subtle Wireframe
     fragColor = vec4(vColor, 0.05); 
   } else if (uIsEarth > 0.1) {
-    // SUN STARBURST (Billboard pass)
+    // SUN — simple glowing disc, no rays
     vec2 uv = vUV * 2.0 - 1.0;
     float dist = length(uv);
-    float glow = exp(-dist * 4.0) * 1.5;
-    float rays = 0.0;
-    for(int i=0; i<8; i++) {
-        float angle = float(i) * 3.14159 / 4.0;
-        vec2 dir = vec2(cos(angle), sin(angle));
-        float r = pow(max(dot(normalize(uv), dir), 0.0), 40.0);
-        rays += r * exp(-dist * 1.5);
-    }
-    float core = smoothstep(0.15, 0.05, dist);
-    vec3 sunCol = vec3(1.0, 0.95, 0.8);
-    fragColor = vec4(sunCol * (glow + rays * 0.6 + core * 2.0), glow + rays + core);
+    float core = smoothstep(0.2, 0.05, dist);
+    float glow = exp(-dist * 3.0) * 1.2;
+    vec3 sunCol = vec3(1.0, 0.95, 0.85);
+    fragColor = vec4(sunCol * (core * 2.0 + glow), core + glow);
   } else {
     fragColor = vec4(vColor, 1.0); // Satellite
   }
@@ -157,6 +185,8 @@ export class WebGLContext implements IRenderContext {
   private numGalaxyIndices = 0;
   private vaoSat!: WebGLVertexArrayObject;
   private numSatIndices = 0;
+  private vaoMoon!: WebGLVertexArrayObject;
+  private numMoonIndices = 0;
 
   private projectionMatrix = mat4.create();
   private viewMatrix = mat4.create();
@@ -244,6 +274,10 @@ export class WebGLContext implements IRenderContext {
     const satGeo = createSphere(100, 8, 8);
     this.vaoSat = this.createVao(satGeo.positions, satGeo.normals, satGeo.uvs, satGeo.indices);
     this.numSatIndices = satGeo.indices.length;
+
+    const moonGeo = createSphere(1737, 32, 32); // Moon radius 1737 km
+    this.vaoMoon = this.createVao(moonGeo.positions, moonGeo.normals, moonGeo.uvs, moonGeo.indices);
+    this.numMoonIndices = moonGeo.indices.length;
 
     // Hack: use vaoSat logic for simplicity but it's a quad
     this.numSatIndices = satGeo.indices.length; 
@@ -508,6 +542,32 @@ export class WebGLContext implements IRenderContext {
     gl.disable(gl.CULL_FACE);
     gl.drawElements(gl.LINES, this.numEarthIndices, gl.UNSIGNED_SHORT, 0);
 
+    // 1b. Moon — orbits Earth, lit by sun
+    {
+      const moonOrbitRadius = 12000; // Closer orbit for visibility
+      const moonAngle = time * 0.00003; // Slow orbit
+      const moonX = Math.cos(moonAngle) * moonOrbitRadius;
+      const moonZ = Math.sin(moonAngle) * moonOrbitRadius;
+      const moonY = Math.sin(moonAngle * 0.5) * 2000; // Slight inclination
+
+      const moonModelView = mat4.clone(this.viewMatrix);
+      mat4.translate(moonModelView, moonModelView, [moonX, moonY, moonZ]);
+      // Tidally locked: same face toward Earth
+      mat4.rotateY(moonModelView, moonModelView, -moonAngle);
+
+      const moonNormalMatrix = mat4.create();
+      mat4.invert(moonNormalMatrix, moonModelView);
+      mat4.transpose(moonNormalMatrix, moonNormalMatrix);
+
+      gl.uniformMatrix4fv(this.uModelView, false, moonModelView);
+      gl.uniformMatrix4fv(this.uNormalMatrix, false, moonNormalMatrix);
+      gl.uniform1f(this.uIsEarth, 1.5); // Moon mode
+      gl.uniform3f(this.uColor, 0.15, 0.15, 0.14);
+      gl.enable(gl.CULL_FACE);
+      gl.bindVertexArray(this.vaoMoon);
+      gl.drawElements(gl.TRIANGLES, this.numMoonIndices, gl.UNSIGNED_SHORT, 0);
+    }
+
     // 2. Satellites
     gl.bindVertexArray(this.vaoSat);
     gl.enable(gl.CULL_FACE);
@@ -522,15 +582,15 @@ export class WebGLContext implements IRenderContext {
       gl.drawElements(gl.TRIANGLES, this.numSatIndices, gl.UNSIGNED_SHORT, 0);
     }
 
-    // 3. Sun Billboard (The "Light Rays")
-    const sunWorldPos = [sunWorld[0] * 40000, sunWorld[1] * 40000, sunWorld[2] * 40000];
+    // 3. Sun Billboard (small disc)
+    const sunWorldPos = [sunWorld[0] * 80000, sunWorld[1] * 80000, sunWorld[2] * 80000];
     const sunModelView = mat4.clone(this.viewMatrix);
     mat4.translate(sunModelView, sunModelView, sunWorldPos as any);
     
     // Cancel rotation (billboarding)
-    sunModelView[0] = 10000; sunModelView[1] = 0; sunModelView[2] = 0;
-    sunModelView[4] = 0; sunModelView[5] = 10000; sunModelView[6] = 0;
-    sunModelView[8] = 0; sunModelView[9] = 0; sunModelView[10] = 10000;
+    sunModelView[0] = 1500; sunModelView[1] = 0; sunModelView[2] = 0;
+    sunModelView[4] = 0; sunModelView[5] = 1500; sunModelView[6] = 0;
+    sunModelView[8] = 0; sunModelView[9] = 0; sunModelView[10] = 1500;
 
     gl.uniformMatrix4fv(this.uModelView, false, sunModelView);
     gl.uniform1f(this.uIsEarth, 0.2); // Sun mode

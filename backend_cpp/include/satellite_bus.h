@@ -64,6 +64,7 @@ private:
     double   solar_w_;       // instantaneous solar generation
     double   draw_w_;        // instantaneous total draw
     uint32_t cycles_;        // accumulated charge/discharge count
+    double   discharge_accumulator_j_; // cumulative Joules discharged for EFC cycle counting
     bool     was_charging_;  // for cycle detection edge
     double   fuel_kg_;       // remaining propellant (kg)
     double   thermal_factor_; // battery temp factor [0.5, 1.0]

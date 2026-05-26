@@ -159,6 +159,7 @@ public static class Program
         int[] eclipseSteps = new int[NUM_SATS];
         int[] saaSteps = new int[NUM_SATS];
         bool[] watchdogTriggered = new bool[NUM_SATS];
+        bool[] wasDead = new bool[NUM_SATS]; // Track previous dead state for edge detection
 
         // ── 6. Main Simulation Loop ──────────────────────────────
         while (step < config.MaxSteps && !engines.All(e => e.IsDone))
@@ -330,8 +331,19 @@ public static class Program
             }
             step++;
 
-            // g. Log + broadcast only on skip boundary
-            bool isBroadcastStep = (step % config.Skip == 0) || engines.Any(e => e.IsDone);
+            // Detect if any satellite *just* died this step (edge trigger, not level)
+            bool newDeathThisStep = false;
+            for (int i = 0; i < NUM_SATS; i++)
+            {
+                if (engines[i].IsDone && !wasDead[i])
+                {
+                    wasDead[i] = true;
+                    newDeathThisStep = true;
+                }
+            }
+
+            // g. Log + broadcast only on skip boundary (or the single step a death occurs)
+            bool isBroadcastStep = (step % config.Skip == 0) || newDeathThisStep;
 
             if (isBroadcastStep)
             {
@@ -360,7 +372,7 @@ public static class Program
 
             // h. Periodic console output
             int consoleInterval = Math.Max(1000, config.Skip * 100);
-            if (step % consoleInterval == 0 || engines.Any(e => e.IsDone))
+            if (step % consoleInterval == 0 || newDeathThisStep)
             {
                 Console.WriteLine($"[Step {step,6}] Constellation Status:");
                 for (int i = 0; i < NUM_SATS; i++)

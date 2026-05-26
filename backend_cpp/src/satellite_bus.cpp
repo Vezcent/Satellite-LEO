@@ -19,6 +19,7 @@ void SatelliteBus::reset() {
     solar_w_      = 0.0;
     draw_w_       = 0.0;
     cycles_       = 0;
+    discharge_accumulator_j_ = 0.0;
     was_charging_ = true;   // assume starts charging
     fuel_kg_      = constants::SAT_FUEL_KG;
     thermal_factor_ = 1.0;
@@ -45,17 +46,23 @@ void SatelliteBus::update(double penumbra_factor, double panel_eff,
     double net_power_w = solar_w_ - draw_w_;
     double energy_delta_j = net_power_w * dt;
 
-    double battery_energy_j = soc_ * eff_cap + energy_delta_j;
+    double old_energy = soc_ * eff_cap;
+    double battery_energy_j = old_energy + energy_delta_j;
     battery_energy_j = smas::compat::clamp(battery_energy_j, 0.0, eff_cap);
     soc_ = (eff_cap > 0.0) ? battery_energy_j / eff_cap : 0.0;
 
-    // ── Charge/discharge cycle detection ──────────────────────────
-    bool is_charging = (net_power_w > 0.0);
-    if (was_charging_ && !is_charging) {
-        // Transition from charging to discharging → one cycle completed
-        cycles_++;
-        apply_cycle_degradation();
+    // ── Equivalent Full Cycle (EFC) detection ─────────────────────
+    double actual_energy_delta = battery_energy_j - old_energy;
+    if (actual_energy_delta < 0.0) {
+        discharge_accumulator_j_ += -actual_energy_delta;
+        if (eff_cap > 0.0 && discharge_accumulator_j_ >= eff_cap) {
+            cycles_++;
+            apply_cycle_degradation();
+            discharge_accumulator_j_ -= eff_cap;
+        }
     }
+
+    bool is_charging = (net_power_w > 0.0);
     was_charging_ = is_charging;
 }
 

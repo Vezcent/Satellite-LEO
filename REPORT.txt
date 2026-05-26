@@ -639,7 +639,7 @@
     - Constellation status: "N/4 ALIVE", terminates when all satellites done
 
     Header format:
-    [Version(1B) | SatID(1B) | Seq(4B) | PayloadLen(4B) | Payload(222B) | CRC32(4B)]
+    [Version(1B) | SatID(1B) | Seq(4B) | PayloadLen(4B) | Payload(238B) | CRC32(4B)]
 
   7.4 Binary Telemetry Protocol
 

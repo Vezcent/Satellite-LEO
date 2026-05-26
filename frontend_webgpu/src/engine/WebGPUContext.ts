@@ -59,7 +59,42 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-  if (uniforms.isEarth > 0.8) {
+  if (uniforms.isEarth > 1.4) {
+    // MOON — procedural cratered surface
+    let N = normalize(in.normal);
+    let L = normalize(uniforms.sunDir.xyz);
+    let diff = max(dot(N, L), 0.0);
+
+    // Procedural craters using layered noise on local normal
+    var p = in.localNormal * 8.0;
+    var craters = 0.0;
+    var amp = 1.0;
+    for(var i: i32 = 0; i < 6; i++) {
+        let n = sin(p.x * 1.7 + p.y * 2.3) * cos(p.y * 1.9 + p.z * 2.7) + sin(p.z * 2.1 + p.x * 1.3);
+        let crater = smoothstep(0.6, 0.8, abs(n));
+        craters += crater * amp;
+        p *= 2.3;
+        amp *= 0.45;
+    }
+    craters = clamp(craters / 2.5, 0.0, 1.0);
+
+    // Maria (dark plains) vs Highlands
+    let pm = in.localNormal * 2.0;
+    let maria = sin(pm.x * 1.2) * cos(pm.y * 0.8 + pm.z * 1.5);
+    let mariaFactor = smoothstep(-0.3, 0.3, maria);
+
+    let highland = vec3<f32>(0.18, 0.17, 0.16);
+    let mariaCol = vec3<f32>(0.08, 0.08, 0.07);
+    var moonBase = mix(mariaCol, highland, mariaFactor);
+
+    // Apply craters as darkening
+    moonBase *= (0.7 + 0.3 * craters);
+
+    // Direct lighting only — no atmosphere
+    let moonColor = moonBase * (0.03 + 0.97 * diff);
+    return vec4<f32>(moonColor, 1.0);
+
+  } else if (uniforms.isEarth > 0.8) {
     let N = normalize(in.normal);
     let L = normalize(uniforms.sunDir.xyz);
     let V = normalize(-in.viewPos);
@@ -128,20 +163,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Subtle Wireframe
     return vec4<f32>(in.color.rgb, 0.05); 
   } else if (uniforms.isEarth > 0.1) {
-    // SUN STARBURST
+    // SUN — simple glowing disc, no rays
     let uv = in.uv * 2.0 - 1.0;
     let dist = length(uv);
-    let glow = exp(-dist * 4.0) * 1.5;
-    var rays = 0.0;
-    for(var i: i32 = 0; i < 8; i++) {
-        let angle = f32(i) * 3.14159 / 4.0;
-        let dir = vec2<f32>(cos(angle), sin(angle));
-        let r = pow(max(dot(normalize(uv), dir), 0.0), 40.0);
-        rays += r * exp(-dist * 1.5);
-    }
-    let core = smoothstep(0.15, 0.05, dist);
-    let sunCol = vec3<f32>(1.0, 0.95, 0.8);
-    return vec4<f32>(sunCol * (glow + rays * 0.6 + core * 2.0), glow + rays + core);
+    let core = smoothstep(0.2, 0.05, dist);
+    let glow = exp(-dist * 3.0) * 1.2;
+    let sunCol = vec3<f32>(1.0, 0.95, 0.85);
+    return vec4<f32>(sunCol * (core * 2.0 + glow), core + glow);
   } else {
     return in.color;
   }
@@ -161,6 +189,12 @@ export class WebGPUContext implements IRenderContext {
   private earthVBU!: GPUBuffer;
   private earthEBO!: GPUBuffer;
   private numEarthIndices = 0;
+
+  private moonVBO!: GPUBuffer;
+  private moonVBN!: GPUBuffer;
+  private moonVBU!: GPUBuffer;
+  private moonEBO!: GPUBuffer;
+  private numMoonIndices = 0;
 
   private galaxyVBO!: GPUBuffer;
   private galaxyEBO!: GPUBuffer;
@@ -187,6 +221,8 @@ export class WebGPUContext implements IRenderContext {
   
   private earthBindGroup!: GPUBindGroup;
   private earthWireBindGroup!: GPUBindGroup;
+  private moonBindGroup!: GPUBindGroup;
+  private moonUniformBuffer!: GPUBuffer;
   private sunBindGroup!: GPUBindGroup;
   private galaxyBindGroup!: GPUBindGroup;
   private galaxyUniformBuffer!: GPUBuffer;
@@ -296,8 +332,16 @@ export class WebGPUContext implements IRenderContext {
     this.satEBO = this.createBuffer(satGeo.indices, GPUBufferUsage.INDEX);
     this.numSatIndices = satGeo.indices.length;
 
+    const moonGeo = createSphere(1737, 32, 32); // Moon radius 1737 km
+    this.moonVBO = this.createBuffer(moonGeo.positions, GPUBufferUsage.VERTEX);
+    this.moonVBN = this.createBuffer(moonGeo.normals, GPUBufferUsage.VERTEX);
+    this.moonVBU = this.createBuffer(moonGeo.uvs, GPUBufferUsage.VERTEX);
+    this.moonEBO = this.createBuffer(moonGeo.indices, GPUBufferUsage.INDEX);
+    this.numMoonIndices = moonGeo.indices.length;
+
     this.earthUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.earthWireUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.moonUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.sunUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     this.heatmapSampler = this.device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
@@ -305,6 +349,7 @@ export class WebGPUContext implements IRenderContext {
 
     this.earthBindGroup = this.createBindGroup(this.earthUniformBuffer, this.solidPipeline);
     this.earthWireBindGroup = this.createBindGroup(this.earthWireUniformBuffer, this.wirePipeline);
+    this.moonBindGroup = this.createBindGroup(this.moonUniformBuffer, this.solidPipeline);
     this.sunBindGroup = this.createBindGroup(this.sunUniformBuffer, this.sunPipeline);
 
     for (let i = 0; i < 4; i++) {
@@ -436,7 +481,7 @@ export class WebGPUContext implements IRenderContext {
     }
 
     const aspect = canvas.width / canvas.height;
-    mat4.perspective(this.projMatrix, 45 * Math.PI / 180, aspect, 100.0, 50000.0);
+    mat4.perspective(this.projMatrix, 45 * Math.PI / 180, aspect, 100.0, 120000.0);
 
     const camAngle = time * 0.0001;
     const camRadius = 25000;
@@ -488,12 +533,40 @@ export class WebGPUContext implements IRenderContext {
     galaxyView[12] = 0; galaxyView[13] = 0; galaxyView[14] = 0;
     updateUniform(this.galaxyUniformBuffer, galaxyView, vec3.fromValues(1,1,1), -1.0);
 
-    const sunWorldPos = [sunWorld[0] * 40000, sunWorld[1] * 40000, sunWorld[2] * 40000];
+    // Moon orbit computation
+    const moonOrbitRadius = 12000; // Closer orbit for visibility
+    const moonAngle = time * 0.00003; // Slow orbit
+    const moonX = Math.cos(moonAngle) * moonOrbitRadius;
+    const moonZ = Math.sin(moonAngle) * moonOrbitRadius;
+    const moonY = Math.sin(moonAngle * 0.5) * 2000; // Slight inclination
+
+    const moonModelView = mat4.clone(this.viewMatrix);
+    mat4.translate(moonModelView, moonModelView, [moonX, moonY, moonZ]);
+    mat4.rotateY(moonModelView, moonModelView, -moonAngle); // Tidally locked
+
+    const moonNormalMatrix = mat4.create();
+    mat4.invert(moonNormalMatrix, moonModelView);
+    mat4.transpose(moonNormalMatrix, moonNormalMatrix);
+
+    // Moon uses its own normal matrix for correct lighting
+    const updateMoonUniform = (buffer: GPUBuffer, mv: mat4, normMat: mat4) => {
+      const data = new Float32Array(60);
+      data.set(mv, 0);
+      data.set(this.projMatrix, 16);
+      data.set(normMat, 32);
+      data.set([0.15, 0.15, 0.14, 1.0], 48);
+      data.set(sunDir, 52);
+      data.set([1.5, 0, 0, 0], 56); // isEarth = 1.5 for Moon
+      this.device.queue.writeBuffer(buffer, 0, data);
+    };
+    updateMoonUniform(this.moonUniformBuffer, moonModelView, moonNormalMatrix as mat4);
+
+    const sunWorldPos = [sunWorld[0] * 80000, sunWorld[1] * 80000, sunWorld[2] * 80000];
     const sunModelView = mat4.clone(this.viewMatrix);
     mat4.translate(sunModelView, sunModelView, sunWorldPos as any);
-    sunModelView[0] = 10000; sunModelView[1] = 0; sunModelView[2] = 0;
-    sunModelView[4] = 0; sunModelView[5] = 10000; sunModelView[6] = 0;
-    sunModelView[8] = 0; sunModelView[9] = 0; sunModelView[10] = 10000;
+    sunModelView[0] = 1500; sunModelView[1] = 0; sunModelView[2] = 0;
+    sunModelView[4] = 0; sunModelView[5] = 1500; sunModelView[6] = 0;
+    sunModelView[8] = 0; sunModelView[9] = 0; sunModelView[10] = 1500;
     updateUniform(this.sunUniformBuffer, sunModelView, vec3.fromValues(1,1,1), 0.2);
 
     const commandEncoder = this.device.createCommandEncoder();
@@ -536,6 +609,15 @@ export class WebGPUContext implements IRenderContext {
     renderPass.setVertexBuffer(2, this.earthVBU);
     renderPass.setIndexBuffer(this.earthEBO, 'uint16');
     renderPass.drawIndexed(this.numEarthIndices);
+
+    // 1b. Moon
+    renderPass.setPipeline(this.solidPipeline);
+    renderPass.setBindGroup(0, this.moonBindGroup);
+    renderPass.setVertexBuffer(0, this.moonVBO);
+    renderPass.setVertexBuffer(1, this.moonVBN);
+    renderPass.setVertexBuffer(2, this.moonVBU);
+    renderPass.setIndexBuffer(this.moonEBO, 'uint16');
+    renderPass.drawIndexed(this.numMoonIndices);
 
     renderPass.setPipeline(this.solidPipeline);
     renderPass.setVertexBuffer(0, this.satVBO);
