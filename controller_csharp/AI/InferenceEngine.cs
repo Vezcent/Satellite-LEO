@@ -84,15 +84,21 @@ public sealed class InferenceEngine : IDisposable
     /// <returns>Combined actions from all agents.</returns>
     public AgentActions Infer(float[] obs)
     {
-        // Dynamically detect expected input dimension to support both Phase 3 (37-dim) and Phase 4 (42-dim) models
+        // Dynamically detect expected input dimension to support Phase 3 (37-dim), Phase 4 (42-dim) and Phase C (44-dim) models
         int expectedDim = _navSession.InputMetadata["obs_input"].Dimensions[1];
         float[] inferenceObs = obs;
-        if (expectedDim == 37 && obs.Length == 42)
+        if (expectedDim == 37 && obs.Length >= 42)
         {
-            // Slice out the 5 ADCS features at indices [33..37] to run 37-dim models
+            // Slice out the 5 ADCS features at indices [33..37] and the Debris features to run 37-dim models
             inferenceObs = new float[37];
             Array.Copy(obs, 0, inferenceObs, 0, 33);
             Array.Copy(obs, 38, inferenceObs, 33, 4);
+        }
+        else if (expectedDim == 42 && obs.Length >= 44)
+        {
+            // Slice out the Debris features to run 42-dim models
+            inferenceObs = new float[42];
+            Array.Copy(obs, 0, inferenceObs, 0, 42);
         }
 
         var tensor = new DenseTensor<float>(inferenceObs, [1, inferenceObs.Length]);

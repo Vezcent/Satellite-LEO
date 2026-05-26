@@ -32,6 +32,7 @@ bool SimulationEngine::init() {
     ok &= saa_.load(base + "saa_heatmap_600km.csv");
     ok &= gs_list_.load(base + "ground_stations.json");
     ok &= tle_.load(base + "initial_state.txt");
+    ok &= debris_catalog_.load(base + "debris_catalog.json");
 
     if (!ok) {
         std::cerr << "[Engine] Data loading failed.\n";
@@ -436,6 +437,49 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     // Comms & Data (Phase B Step 7)
     state_.data_buffer_mb = static_cast<float>(data_buffer_mb_);
     state_.snr_db         = static_cast<float>(max_snr_db);
+
+    // ── Constellation & Debris (Task 8.4) ──
+    double min_dist = 99999999.0;
+    double time_to_tca = 9999.0;
+
+    for (const auto& dobj : debris_catalog_.debris()) {
+        OrbitalElements oe;
+        oe.semi_major_axis_m = dobj.semi_major_axis_m;
+        oe.eccentricity = dobj.eccentricity;
+        oe.inclination_rad = dobj.inclination_rad;
+        oe.raan_rad = dobj.raan_rad;
+        oe.arg_perigee_rad = dobj.arg_perigee_rad;
+        double n = std::sqrt(constants::EARTH_GM / (oe.semi_major_axis_m * oe.semi_major_axis_m * oe.semi_major_axis_m));
+        oe.mean_anomaly_rad = std::fmod(dobj.mean_anomaly_rad + n * sim_time_struct_.total_seconds, constants::TWO_PI);
+
+        Vec3 deb_pos, deb_vel;
+        TLEParser::elements_to_eci(oe, deb_pos, deb_vel);
+
+        double dist = (orbit_.pos - deb_pos).magnitude();
+        if (dist < min_dist) {
+            min_dist = dist;
+
+            // Approximate TCA using relative position and velocity
+            double r_dot_v = (orbit_.pos - deb_pos).dot(orbit_.vel - deb_vel);
+            double v_rel_sq = (orbit_.vel - deb_vel).magnitude_sq();
+            if (v_rel_sq > 1e-3) {
+                double t = -r_dot_v / v_rel_sq;
+                if (t > 0) {
+                    time_to_tca = t;
+                }
+            }
+        }
+    }
+
+    double risk = 0.0;
+    if (min_dist < 5000.0) {
+        risk = (5000.0 - min_dist) / 4000.0;
+        if (risk > 1.0) risk = 1.0;
+        if (risk < 0.0) risk = 0.0;
+    }
+
+    state_.conjunction_risk = static_cast<float>(risk);
+    state_.time_to_tca_s    = static_cast<float>(time_to_tca);
 
     return state_;
 }

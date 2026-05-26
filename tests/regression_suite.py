@@ -13,8 +13,8 @@ from config import EnvConfig, ObsConfig
 
 class TestABI(unittest.TestCase):
     def test_statepacket_size(self):
-        """Verify that Python ctypes StatePacket matches version 4 size of 230 bytes."""
-        self.assertEqual(ct.sizeof(StatePacket), 230)
+        """Verify that Python ctypes StatePacket matches version 4 size of 238 bytes."""
+        self.assertEqual(ct.sizeof(StatePacket), 238)
 
     def test_actionpacket_size(self):
         """Verify that Python ctypes ActionPacket matches version 1 size of 20 bytes."""
@@ -26,8 +26,8 @@ class TestObservation(unittest.TestCase):
         self.builder = ObservationBuilder()
 
     def test_obs_dim(self):
-        """Verify that the S-MAS Phase A observation vector has exactly 42 dimensions."""
-        self.assertEqual(self.builder.obs_dim, 42)
+        """Verify that the S-MAS Phase A observation vector has exactly 44 dimensions."""
+        self.assertEqual(self.builder.obs_dim, 44)
 
     def test_normalization_ranges(self):
         """Verify that normalized observation values are properly bounded and mapped."""

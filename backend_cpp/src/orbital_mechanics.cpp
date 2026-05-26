@@ -82,7 +82,6 @@ Vec3 gravity_j2(const Vec3& pos_m) {
     if (r < 1.0) return Vec3(); // safety
 
     double r2 = r * r;
-    double r5 = r2 * r2 * r;
     double mu = constants::EARTH_GM;
     double Re = constants::EARTH_RADIUS_M;
     double J2 = constants::EARTH_J2;
@@ -130,6 +129,7 @@ Vec3 drag_acceleration(const Vec3& pos_m, const Vec3& vel_ms,
 
 Vec3 thrust_acceleration(const Vec3& thrust_dir, double throttle,
                          double max_dv_per_step, double mass_kg) {
+    (void)mass_kg; // Suppress unused parameter warning
     // Convert agent action to a physical acceleration
     // thrust_dir components are in [-1, 1] (attitude)
     // throttle is in [0, 1]

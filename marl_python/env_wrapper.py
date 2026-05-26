@@ -84,6 +84,9 @@ class StatePacket(ct.Structure):
         # Comms & Data (Phase B Step 7)
         ("data_buffer_mb",      ct.c_float),
         ("snr_db",              ct.c_float),
+        # Constellation & Debris (Task 8.4)
+        ("conjunction_risk",    ct.c_float),
+        ("time_to_tca_s",       ct.c_float),
     ]
 
 

@@ -25,12 +25,12 @@ using SmasController.Interop;
 namespace SmasController.AI;
 
 /// <summary>
-/// Builds a normalised 42-dim observation vector from a StatePacket.
+/// Builds a normalised 44-dim observation vector from a StatePacket.
 /// All normalisation logic exactly mirrors observation.py.
 /// </summary>
 public sealed class ObservationBuilder
 {
-    public const int ObsDim = 42;
+    public const int ObsDim = 44;
 
     // Goal-conditioned altitude range (MUST match config.py ObsConfig)
     private const double TargetAltMin = 580.6;
@@ -124,6 +124,10 @@ public sealed class ObservationBuilder
         obs[i++] = 0f;
         obs[i++] = 0f;
         obs[i++] = 0f;
+
+        // ── 12. Debris & Constellation features (2) — Task 8.4 ──────
+        obs[i++] = s.ConjunctionRisk;
+        obs[i++] = MinMax(s.TimeToTcaS, 0.0, 6000.0);
 
         return obs;
     }

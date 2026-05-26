@@ -63,6 +63,7 @@ private:
     SAAHeatmap        saa_;
     GroundStationList gs_list_;
     TLEParser         tle_;
+    DebrisCatalog     debris_catalog_;
 
     // ── Physics ──
     NRLMSISEModel     atmosphere_;

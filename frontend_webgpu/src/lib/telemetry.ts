@@ -59,6 +59,10 @@ export interface TelemetryData {
   // Comms & Data (Phase B Step 7)
   dataBufferMb: number;
   snrDb: number;
+
+  // Constellation & Debris (Task 8.4)
+  conjunctionRisk: number;
+  timeToTcaS: number;
 }
 
 // ── Ground Command Interface (Frontend → C# Controller) ──────────
@@ -197,6 +201,10 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
       const dataBufferMb = view.getFloat32(offset, true); offset += 4;
       const snrDb = view.getFloat32(offset, true); offset += 4;
 
+      // Constellation & Debris (Task 8.4)
+      const conjunctionRisk = view.getFloat32(offset, true); offset += 4;
+      const timeToTcaS = view.getFloat32(offset, true); offset += 4;
+
       const parsedData: TelemetryData = {
         satId, seq, simTimeS, altitudeKm, latitudeDeg, longitudeDeg,
         batterySoc, solarPowerW, powerDrawW, inEclipse, inSaa,
@@ -206,7 +214,7 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
         deepSleep, payloadOn, fdirOverridden,
         fuelFraction, fuelDepleted, tempBus, tempBattery, tempPayload, heaterOn,
         sunAngle, nadirError, wheelMomentumX, wheelMomentumY, wheelMomentumZ,
-        dataBufferMb, snrDb
+        dataBufferMb, snrDb, conjunctionRisk, timeToTcaS
       };
 
       setSatellites(prev => {

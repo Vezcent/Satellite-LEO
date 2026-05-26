@@ -80,6 +80,10 @@ public static class TelemetryPacket
         bw.Write(state.DataBufferMb);
         bw.Write(state.SnrDb);
 
+        // Constellation & Debris (Task 8.4)
+        bw.Write(state.ConjunctionRisk);
+        bw.Write(state.TimeToTcaS);
+
         bw.Flush();
         byte[] payload = ms.ToArray();
 

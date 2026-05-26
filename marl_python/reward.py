@@ -115,6 +115,13 @@ class SurvivalReward:
         elif temp_battery > 45.0:
             reward -= cfg.w_thermal * (temp_battery - 45.0) / 25.0
 
+        # ── 8. Debris Conjunction Penalty & CAM (Task 8.4) ─────────
+        conjunction_risk = float(s.conjunction_risk)
+        if conjunction_risk > 0.0:
+            reward -= cfg.w_conjunction * conjunction_risk
+        if conjunction_risk > 0.8 and throttle > 0.5:
+            reward += cfg.w_cam_success
+
         return reward
 
 

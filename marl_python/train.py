@@ -17,6 +17,52 @@ from env_wrapper import SatelliteEnv, VectorSatelliteEnv
 from observation import ObservationBuilder
 from reward import SurvivalReward, MissionReward
 
+def load_compatible_state_dict(model: nn.Module, state_dict: dict) -> bool:
+    """
+    Loads state_dict into model with dynamic weight padding for size mismatches.
+    Enables loading checkpoints from older phases (e.g. 42-dim) into upgraded models (e.g. 44-dim).
+    Returns True if any shape mismatch was detected and resolved.
+    """
+    model_state = model.state_dict()
+    adjusted_state_dict = {}
+    has_mismatch = False
+    
+    for k, v in state_dict.items():
+        if k in model_state:
+            model_shape = model_state[k].shape
+            saved_shape = v.shape
+            
+            if model_shape != saved_shape:
+                has_mismatch = True
+                print(f"  [COMPATIBILITY SHIM] Shape mismatch for {k}: model expects {model_shape}, saved has {saved_shape}.")
+                
+                # If linear layer weight matrix mismatch in input dimension (dimension 1)
+                if len(model_shape) == 2 and len(saved_shape) == 2 and model_shape[0] == saved_shape[0]:
+                    new_tensor = torch.zeros(model_shape, dtype=v.dtype, device=v.device)
+                    # Copy old weights
+                    new_tensor[:, :saved_shape[1]] = v
+                    # Random initialize new feature weights
+                    if model_shape[1] > saved_shape[1]:
+                        new_tensor[:, saved_shape[1]:] = torch.randn(model_shape[0], model_shape[1] - saved_shape[1], device=v.device) * 0.01
+                    
+                    adjusted_state_dict[k] = new_tensor
+                    print(f"  Successfully padded weight {k} from {saved_shape} to {model_shape} [OK]")
+                else:
+                    print(f"  Cannot adapt shape for {k}, keeping model's default initialization.")
+                    adjusted_state_dict[k] = model_state[k]
+            else:
+                adjusted_state_dict[k] = v
+        else:
+            print(f"  Key {k} in checkpoint is not in the current model, skipping.")
+            
+    for k in model_state.keys():
+        if k not in adjusted_state_dict:
+            print(f"  Key {k} missing in checkpoint, keeping model's default initialization.")
+            adjusted_state_dict[k] = model_state[k]
+            
+    model.load_state_dict(adjusted_state_dict)
+    return has_mismatch
+
 def train(train_cfg: TrainConfig,
           env_cfg: EnvConfig,
           obs_cfg: ObsConfig,
@@ -64,9 +110,14 @@ def train(train_cfg: TrainConfig,
     if resume_ckpt and os.path.exists(resume_ckpt):
         print(f"  Resuming from: {resume_ckpt}")
         ckpt = torch.load(resume_ckpt, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state"])
-        if "optimizer_state" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer_state"])
+        has_mismatch = load_compatible_state_dict(model, ckpt["model_state"])
+        if "optimizer_state" in ckpt and not has_mismatch:
+            try:
+                optimizer.load_state_dict(ckpt["optimizer_state"])
+            except Exception as ex:
+                print(f"  [COMPATIBILITY SHIM] Could not load optimizer state due to parameter shape changes ({ex}). Initialising clean Adam optimizer state.")
+        else:
+            print("  [COMPATIBILITY SHIM] Mismatch detected in model weights or optimizer state missing. Skipping optimizer loading to prevent runtime size errors. Initialising clean Adam optimizer state.")
         episode_count = ckpt.get("episode", 0)
         # Old checkpoints didn't have total_steps and were 17,280 steps/ep
         total_steps = ckpt.get("total_steps", episode_count * 17280)

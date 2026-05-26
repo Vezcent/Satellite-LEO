@@ -186,6 +186,11 @@ class ObservationBuilder:
             buf[i + 3] = _clamp01((weather_lag.get("f107_6h", 0) - 50.0) / 250.0)
         else:
             buf[i] = 0.0; buf[i + 1] = 0.0; buf[i + 2] = 0.0; buf[i + 3] = 0.0
+        i += 4
+
+        # ── 13. Debris Conjunction features (2) ───────────────────
+        buf[i] = s.conjunction_risk; i += 1
+        buf[i] = _clamp01(s.time_to_tca_s / 6000.0); i += 1
 
         # Return a COPY so the caller's reference isn't invalidated
         # when we overwrite self._buf on the next call.

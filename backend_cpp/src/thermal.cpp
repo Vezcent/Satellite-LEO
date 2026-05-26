@@ -41,6 +41,7 @@ double ThermalModel::radiative_loss(double temp_k, double emissivity, double are
 
 void ThermalModel::update(double penumbra_factor, double solar_power_w,
                            double power_draw_w, double dt) {
+    (void)solar_power_w; // Suppress unused parameter warning
     // ── Bus node ──────────────────────────────────────────────────
     double T_bus_k = to_kelvin(state_.temp_bus);
 

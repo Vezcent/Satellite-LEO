@@ -1,0 +1,64 @@
+{
+  "debris": [
+    {
+      "id": "DEBRIS_ALPHA_BOOSTER",
+      "name": "CZ-4B dead booster",
+      "semi_major_axis_m": 6978137.0,
+      "eccentricity": 0.0012,
+      "inclination_deg": 98.2,
+      "raan_deg": 45.0,
+      "arg_of_perigee_deg": 120.0,
+      "mean_anomaly_deg": 0.0,
+      "mass_kg": 1800.0,
+      "drag_area_m2": 6.5
+    },
+    {
+      "id": "DEBRIS_BETA_SATELLITE",
+      "name": "Dead Iridium-33 fragment",
+      "semi_major_axis_m": 6968137.0,
+      "eccentricity": 0.002,
+      "inclination_deg": 86.4,
+      "raan_deg": 180.0,
+      "arg_of_perigee_deg": 0.0,
+      "mean_anomaly_deg": 90.0,
+      "mass_kg": 150.0,
+      "drag_area_m2": 1.5
+    },
+    {
+      "id": "DEBRIS_GAMMA_ROCKET_BODY",
+      "name": "SL-8 R/B",
+      "semi_major_axis_m": 6988137.0,
+      "eccentricity": 0.0005,
+      "inclination_deg": 82.9,
+      "raan_deg": 315.0,
+      "arg_of_perigee_deg": 240.0,
+      "mean_anomaly_deg": 180.0,
+      "mass_kg": 1400.0,
+      "drag_area_m2": 4.5
+    },
+    {
+      "id": "DEBRIS_DELTA_ANTENNA",
+      "name": "Cosmos dead array fragment",
+      "semi_major_axis_m": 6958137.0,
+      "eccentricity": 0.0035,
+      "inclination_deg": 74.0,
+      "raan_deg": 90.0,
+      "arg_of_perigee_deg": 10.0,
+      "mean_anomaly_deg": 270.0,
+      "mass_kg": 85.0,
+      "drag_area_m2": 2.0
+    },
+    {
+      "id": "DEBRIS_EPSILON_SHIELD",
+      "name": "ESA instrument cover shield",
+      "semi_major_axis_m": 6975000.0,
+      "eccentricity": 0.001,
+      "inclination_deg": 97.8,
+      "raan_deg": 135.0,
+      "arg_of_perigee_deg": 45.0,
+      "mean_anomaly_deg": 120.0,
+      "mass_kg": 45.0,
+      "drag_area_m2": 0.8
+    }
+  ]
+}

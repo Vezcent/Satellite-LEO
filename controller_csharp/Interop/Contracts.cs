@@ -116,6 +116,10 @@ public struct StatePacket
     public float  DataBufferMb;
     public float  SnrDb;
 
+    // ── Constellation & Debris (Task 8.4) ──
+    public float  ConjunctionRisk;
+    public float  TimeToTcaS;
+
     /// <summary>Typed accessor for the FDIR mode.</summary>
     public readonly FdirMode FdirModeEnum => (FdirMode)FdirMode;
 

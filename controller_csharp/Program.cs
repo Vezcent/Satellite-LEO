@@ -70,6 +70,9 @@ public static class Program
         Console.WriteLine($"  WebSocket: {(config.NoWebSocket ? "DISABLED" : $"ws://localhost:{config.Port}/")}");
         Console.WriteLine();
 
+        // Print flight CPU benchmark report at startup
+        FlightHardwareSimulator.RunPrecisionBenchmark(ObservationBuilder.ObsDim);
+
         const int NUM_SATS = 4;
 
         // ── 1. Create + Init Physics Engines ─────────────────────
@@ -139,11 +142,23 @@ public static class Program
             engines[i].Step(ref initAction, ref states[i]);
         }
 
+        var lastAiActions = new AgentActions[NUM_SATS];
+        for (int i = 0; i < NUM_SATS; i++)
+        {
+            lastAiActions[i] = new AgentActions
+            {
+                Nav = new NavigationAction(),
+                DeepSleep = 0,
+                PayloadOn = 0
+            };
+        }
+
         int step = 0;
         int[] fdirOverrides = new int[NUM_SATS];
         int[] payloadOnSteps = new int[NUM_SATS];
         int[] eclipseSteps = new int[NUM_SATS];
         int[] saaSteps = new int[NUM_SATS];
+        bool[] watchdogTriggered = new bool[NUM_SATS];
 
         // ── 6. Main Simulation Loop ──────────────────────────────
         while (step < config.MaxSteps && !engines.All(e => e.IsDone))
@@ -230,33 +245,54 @@ public static class Program
                 else
                 {
                     AgentActions aiActions;
-                    using (var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500)))
+                    if (step % config.ControlInterval == 0)
                     {
-                        try
+                        // Calculate virtual CPU clock cycles for this inference
+                        long cycles = FlightHardwareSimulator.CalculateInferenceCycles(obs.Length, config.Precision);
+
+                        if (cycles > config.WatchdogLimit)
                         {
-                            var inferTask = Task.Run(() => inference.Infer(obs), cts.Token);
-                            if (await Task.WhenAny(inferTask, Task.Delay(500, cts.Token)) == inferTask)
+                            if (!watchdogTriggered[i])
                             {
-                                aiActions = await inferTask;
+                                Console.WriteLine($"  [WATCHDOG TIMEOUT] SAT {i}: Inference cycles {cycles:N0} (Precision: {config.Precision}) exceeded budget of {config.WatchdogLimit:N0}! Forcing SAFE mode.");
+                                watchdogTriggered[i] = true;
                             }
-                            else
-                            {
-                                throw new TimeoutException("Inference timed out (exceeded 500ms)");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // Inference timeout / error → force SAFE mode
                             states[i].FdirMode = (byte)FdirMode.Safe;
-                            Console.WriteLine($"  [WATCHDOG] SAT {i} FAILED: {ex.Message} — forcing SAFE mode!");
                             aiActions = new AgentActions
                             {
                                 Nav = new NavigationAction(),
                                 DeepSleep = 1,
                                 PayloadOn = 0
                             };
+                            lastAiActions[i] = aiActions;
+                        }
+                        else
+                        {
+                            try
+                            {
+                                aiActions = inference.Infer(obs);
+                                lastAiActions[i] = aiActions;
+                            }
+                            catch (Exception ex)
+                            {
+                                // Inference error → force SAFE mode
+                                states[i].FdirMode = (byte)FdirMode.Safe;
+                                Console.WriteLine($"  [INFERENCE ERROR] SAT {i} FAILED: {ex.Message} — forcing SAFE mode!");
+                                aiActions = new AgentActions
+                                {
+                                    Nav = new NavigationAction(),
+                                    DeepSleep = 1,
+                                    PayloadOn = 0
+                                };
+                                lastAiActions[i] = aiActions;
+                            }
                         }
                     }
+                    else
+                    {
+                        aiActions = lastAiActions[i];
+                    }
+
                     action = governors[i].Apply(aiActions, in states[i], out overridden);
                 }
                 overriddenSats[i] = overridden;
@@ -417,7 +453,7 @@ public static class Program
         {
             int csState = Marshal.SizeOf<StatePacket>();
             int csAction = Marshal.SizeOf<ActionPacket>();
-            Assert(csState == 230, $"StatePacket size: expected 230, got {csState}");
+            Assert(csState == 238, $"StatePacket size: expected 238, got {csState}");
             Assert(csAction == 20, $"ActionPacket size: expected 20, got {csAction}");
             Pass(1, "ABI struct sizes", $"State={csState}B, Action={csAction}B");
             passed++;
@@ -460,7 +496,7 @@ public static class Program
         {
             var builder = new ObservationBuilder();
             obs = builder.Build(in state);
-            Assert(obs.Length == 42, $"Obs dim: expected 42, got {obs.Length}");
+            Assert(obs.Length == 44, $"Obs dim: expected 44, got {obs.Length}");
             // Check no NaN/Inf
             for (int i = 0; i < obs.Length; i++)
                 Assert(!float.IsNaN(obs[i]) && !float.IsInfinity(obs[i]),
@@ -468,7 +504,7 @@ public static class Program
             Pass(4, "Observation builder", $"dim={obs.Length}, range=[{obs.Min():F3}, {obs.Max():F3}]");
             passed++;
         }
-        catch (Exception ex) { Fail(4, "Observation builder", ex.Message); obs = new float[42]; }
+        catch (Exception ex) { Fail(4, "Observation builder", ex.Message); obs = new float[44]; }
 
         // ── Test 5: ONNX Session Load ────────────────────────────
         total++;
@@ -588,6 +624,22 @@ public static class Program
         }
         catch (Exception ex) { Fail(10, "Telemetry logger", ex.Message); }
 
+        // ── Test 11: Flight Hardware Watchdog Simulator ──────────
+        total++;
+        try
+        {
+            long fp32Cycles = FlightHardwareSimulator.CalculateInferenceCycles(44, ModelPrecision.FP32);
+            long int8Cycles = FlightHardwareSimulator.CalculateInferenceCycles(44, ModelPrecision.INT8);
+
+            Assert(fp32Cycles > int8Cycles, $"FP32 cycles ({fp32Cycles}) should exceed INT8 cycles ({int8Cycles})");
+            Assert(fp32Cycles > 300_000, $"FP32 cycles ({fp32Cycles}) should exceed 300k");
+            Assert(int8Cycles < 200_000, $"INT8 cycles ({int8Cycles}) should be under 200k");
+
+            Pass(11, "Flight Hardware Watchdog Simulator", $"FP32={fp32Cycles:N0} cycles, INT8={int8Cycles:N0} cycles ✓");
+            passed++;
+        }
+        catch (Exception ex) { Fail(11, "Flight Hardware Watchdog Simulator", ex.Message); }
+
         // ── Summary ──────────────────────────────────────────────
         Console.WriteLine();
         Console.WriteLine($"  ══════════════════════════════════════════════════════");
@@ -612,6 +664,7 @@ public static class Program
             Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "controller_csharp", "models"));
         public int MaxSteps { get; init; } = 17_280;
         public int Skip { get; init; } = 1;
+        public int ControlInterval { get; init; } = 1;
         public ulong Seed { get; init; } = 42;
         public int Port { get; init; } = 8765;
         public bool NoWebSocket { get; init; } = false;
@@ -619,6 +672,8 @@ public static class Program
         public double ReplaySpeed { get; init; } = 1.0;
         public bool RunTest { get; init; } = false;
         public double? TargetAlt { get; init; } = null;
+        public ModelPrecision Precision { get; init; } = ModelPrecision.FP32;
+        public long WatchdogLimit { get; init; } = 300_000;
     }
 
     private static Config ParseArgs(string[] args)
@@ -640,6 +695,9 @@ public static class Program
                 case "--skip" when i + 1 < args.Length:
                     config = config with { Skip = Math.Max(1, int.Parse(args[++i])) };
                     break;
+                case "--control-interval" when i + 1 < args.Length:
+                    config = config with { ControlInterval = Math.Max(1, int.Parse(args[++i])) };
+                    break;
                 case "--seed" when i + 1 < args.Length:
                     config = config with { Seed = ulong.Parse(args[++i]) };
                     break;
@@ -660,6 +718,12 @@ public static class Program
                     break;
                 case "--target-alt" when i + 1 < args.Length:
                     config = config with { TargetAlt = double.Parse(args[++i]) };
+                    break;
+                case "--precision" when i + 1 < args.Length:
+                    config = config with { Precision = Enum.Parse<ModelPrecision>(args[++i].ToUpper()) };
+                    break;
+                case "--watchdog-limit" when i + 1 < args.Length:
+                    config = config with { WatchdogLimit = long.Parse(args[++i]) };
                     break;
             }
         }

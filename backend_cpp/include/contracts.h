@@ -83,6 +83,10 @@ struct StatePacket {
     // ── Comms & Data (Phase B Step 7) ──
     float   data_buffer_mb;       // [0, 256.0] MB (onboard flash storage)
     float   snr_db;               // Strongest ground station link SNR (dB), or -999.0 when LOS
+
+    // ── Constellation & Debris (Task 8.4) ──
+    float   conjunction_risk;     // Normalized risk metric [0, 1] based on closest debris distance
+    float   time_to_tca_s;        // Time to Time of Closest Approach (TCA) in seconds
 };
 
 // ── Action Packet ─────────────────────────────────────────────────

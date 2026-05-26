@@ -15,10 +15,11 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  padding: 1.5rem;
+  padding: 1rem 1.5rem;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 0.5rem;
   z-index: 10;
 }
 
@@ -107,25 +108,26 @@
   font-size: 0.9rem;
 }
 
-/* 2x2 Grid for 4-Satellite Constellation */
+/* 4-Satellite Constellation — compact bottom strip */
 .constellation-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: repeat(2, 1fr);
-  gap: 0.75rem;
-  flex-grow: 1;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
   width: 100%;
-  height: calc(100vh - 6.5rem);
+  pointer-events: auto;
+  /* No flex-grow, no explicit height — cards size to content */
 }
 
 .sat-card {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 0.85rem;
-  background: rgba(10, 10, 18, 0.65);
+  justify-content: flex-start;
+  padding: 0.6rem 0.7rem;
+  background: rgba(10, 10, 18, 0.75);
   border-radius: 10px;
   position: relative;
+  max-height: 180px;
+  overflow: hidden;
 }
 
 .sat-card-header {
@@ -133,21 +135,21 @@
   justify-content: space-between;
   align-items: flex-start;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  padding-bottom: 0.4rem;
+  padding-bottom: 0.3rem;
+  margin-bottom: 0.3rem;
 }
 
 .sat-card-body {
   display: grid;
-  grid-template-columns: 1fr 90px 1.2fr;
-  gap: 0.5rem;
-  flex-grow: 1;
+  grid-template-columns: 1fr 70px 1.2fr;
+  gap: 0.35rem;
   align-items: center;
 }
 
 .sat-card-left {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.2rem;
 }
 
 .sat-card-middle {
@@ -157,13 +159,13 @@
   justify-content: center;
   border-left: 1px solid rgba(255, 255, 255, 0.04);
   border-right: 1px solid rgba(255, 255, 255, 0.04);
-  padding: 0 0.25rem;
+  padding: 0 0.15rem;
 }
 
 .sat-card-right {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.25rem;
 }
 
 .sat-dead-overlay {

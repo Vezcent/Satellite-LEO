@@ -190,7 +190,7 @@ function SatelliteCard({ satId, data }: { satId: number; data: TelemetryData | n
   }
 
   const isDead = data.isDone;
-  const isAlert = data.fdirMode === FdirMode.Safe || data.fdirMode === FdirMode.Degraded;
+  const isAlert = data.fdirMode === FdirMode.Safe || data.fdirMode === FdirMode.Degraded || data.conjunctionRisk > 0.5;
   const lifetime = formatLifetime(data.simTimeS);
   const fdirLabel = getFdirLabel(data.fdirMode);
 
@@ -240,6 +240,28 @@ function SatelliteCard({ satId, data }: { satId: number; data: TelemetryData | n
           </span>
         </div>
       </div>
+
+      {/* Debris Conjunction Warning Banner */}
+      {!isDead && data.conjunctionRisk > 0.05 && (
+        <div style={{
+          background: 'rgba(239, 68, 68, 0.15)',
+          border: '1px solid rgba(239, 68, 68, 0.4)',
+          borderRadius: '4px',
+          padding: '0.25rem 0.5rem',
+          margin: '0.25rem 0.75rem 0 0.75rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          color: '#EF4444',
+          fontSize: '0.6rem',
+          fontFamily: 'monospace',
+          fontWeight: 700,
+          letterSpacing: '0.05em'
+        }}>
+          <ShieldAlert size={12} className="pulse-alert" />
+          <span>COLLISION RISK: {(data.conjunctionRisk * 100).toFixed(0)}% (TCA: {data.timeToTcaS.toFixed(0)}s)</span>
+        </div>
+      )}
 
       {/* Body */}
       <div className="sat-card-body" style={{ opacity: isDead ? 0.25 : 1 }}>
@@ -352,50 +374,44 @@ export default function Dashboard() {
     <>
       <canvas ref={canvasRef} id="canvas-container" />
 
-      <div className="hud-overlay" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-
-        {/* ── Top Bar ── */}
-        <div className="hud-header" style={{ width: '100%', pointerEvents: 'none' }}>
-          <div className="glass-panel" style={{ padding: '0.6rem 1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pointerEvents: 'auto' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-              <h1 style={{ fontSize: '1.1rem', fontWeight: 700, letterSpacing: '0.1em' }} className="text-gradient">
-                S-MAS OPS CONSTELLATION
-              </h1>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace' }}>
-                <span style={{
-                  width: 6, height: 6, borderRadius: '50%',
-                  backgroundColor: connected ? '#22C55E' : '#EF4444',
-                  display: 'inline-block'
-                }} />
-                {connected ? 'LIVE NETWORK' : 'DISCONNECTED'}
-              </div>
-            </div>
-            
-            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-              <div>
-                <span style={{ color: 'var(--color-text-secondary)' }}>ACTIVE SATELLITES: </span>
-                <span style={{ color: activeCount > 0 ? '#34D399' : '#EF4444', fontWeight: 700 }}>
-                  {activeCount} / 4
-                </span>
-              </div>
-              <div>
-                <span style={{ color: 'var(--color-text-secondary)' }}>MISSION TIME: </span>
-                <span style={{ color: '#60A5FA', fontWeight: 700 }}>
-                  {lifetime}
-                </span>
-              </div>
-            </div>
+      {/* ── Top Bar — fixed at top, compact ── */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', zIndex: 10, pointerEvents: 'none' }}>
+        <div className="glass-panel" style={{ padding: '0.35rem 1rem', display: 'inline-flex', alignItems: 'center', gap: '1.5rem', pointerEvents: 'auto', fontSize: '0.7rem', fontFamily: 'monospace' }}>
+          <h1 style={{ fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.08em', whiteSpace: 'nowrap' }} className="text-gradient">
+            S-MAS OPS
+          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--color-text-secondary)' }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              backgroundColor: connected ? '#22C55E' : '#EF4444',
+              display: 'inline-block'
+            }} />
+            {connected ? 'LIVE' : 'OFFLINE'}
+          </div>
+          <div>
+            <span style={{ color: 'var(--color-text-secondary)' }}>SAT </span>
+            <span style={{ color: activeCount > 0 ? '#34D399' : '#EF4444', fontWeight: 700 }}>
+              {activeCount}/4
+            </span>
+          </div>
+          <div>
+            <span style={{ color: 'var(--color-text-secondary)' }}>TIME </span>
+            <span style={{ color: '#60A5FA', fontWeight: 700 }}>
+              {lifetime}
+            </span>
           </div>
         </div>
+      </div>
 
-        {/* ── 2x2 Grid Layout for Satellites ── */}
-        <div className="constellation-grid" style={{ pointerEvents: 'auto' }}>
+      {/* ── Bottom Strip — satellite cards ── */}
+      <div className="hud-overlay">
+        <div className="constellation-grid">
           {[0, 1, 2, 3].map(id => (
             <SatelliteCard key={id} satId={id} data={satellites[id]} />
           ))}
         </div>
-
       </div>
+
       <GroundControlPanel sendCommand={sendCommand} connected={connected} />
       <MusicPlayer />
     </>

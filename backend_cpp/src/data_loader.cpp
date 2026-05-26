@@ -310,6 +310,86 @@ bool GroundStationList::load(const std::string& json_path) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  DebrisCatalog
+// ═══════════════════════════════════════════════════════════════════
+
+std::string DebrisCatalog::extract_string(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return "";
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return "";
+    auto q1 = json.find('"', pos + 1);
+    if (q1 == std::string::npos) return "";
+    auto q2 = json.find('"', q1 + 1);
+    if (q2 == std::string::npos) return "";
+    return json.substr(q1 + 1, q2 - q1 - 1);
+}
+
+double DebrisCatalog::extract_number(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\"";
+    auto pos = json.find(search);
+    if (pos == std::string::npos) return 0.0;
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return 0.0;
+    ++pos;
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
+    size_t end = pos;
+    while (end < json.size() &&
+           (std::isdigit(json[end]) || json[end] == '.' || json[end] == '-' || json[end] == '+'))
+        ++end;
+    return std::stod(json.substr(pos, end - pos));
+}
+
+bool DebrisCatalog::load(const std::string& json_path) {
+    std::ifstream f(json_path);
+    if (!f.is_open()) {
+        std::cerr << "[DebrisCatalog] Failed to open: " << json_path << "\n";
+        return false;
+    }
+    std::string content((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+
+    debris_.clear();
+
+    size_t search_pos = 0;
+    while (true) {
+        auto brace_open = content.find('{', search_pos);
+        if (brace_open == std::string::npos) break;
+        if (search_pos == 0 && content.find("debris") > brace_open) {
+            search_pos = brace_open + 1;
+            continue;
+        }
+
+        auto brace_close = content.find('}', brace_open);
+        if (brace_close == std::string::npos) break;
+
+        std::string block = content.substr(brace_open, brace_close - brace_open + 1);
+
+        DebrisObject dobj;
+        dobj.id                = extract_string(block, "id");
+        dobj.name              = extract_string(block, "name");
+        dobj.semi_major_axis_m = extract_number(block, "semi_major_axis_m");
+        dobj.eccentricity      = extract_number(block, "eccentricity");
+        dobj.inclination_rad   = extract_number(block, "inclination_deg") * constants::DEG2RAD;
+        dobj.raan_rad          = extract_number(block, "raan_deg") * constants::DEG2RAD;
+        dobj.arg_perigee_rad   = extract_number(block, "arg_of_perigee_deg") * constants::DEG2RAD;
+        dobj.mean_anomaly_rad  = extract_number(block, "mean_anomaly_deg") * constants::DEG2RAD;
+        dobj.mass_kg           = extract_number(block, "mass_kg");
+        dobj.drag_area_m2      = extract_number(block, "drag_area_m2");
+
+        if (!dobj.id.empty()) {
+            debris_.push_back(dobj);
+        }
+
+        search_pos = brace_close + 1;
+    }
+
+    std::cout << "[DebrisCatalog] Loaded " << debris_.size() << " debris objects.\n";
+    return !debris_.empty();
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  TLE Parser
 // ═══════════════════════════════════════════════════════════════════
 

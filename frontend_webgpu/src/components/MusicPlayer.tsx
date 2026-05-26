@@ -109,22 +109,27 @@ export default function MusicPlayer() {
   return (
     <div style={{
       position: 'fixed',
-      bottom: '1.5rem',
-      right: '1.5rem',
+      top: '50%',
+      right: '1rem',
+      transform: 'translateY(-50%)',
       zIndex: 50,
       pointerEvents: 'auto',
+      display: 'flex',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: '0.5rem',
     }}>
       {/* Expanded Panel */}
       {expanded && (
         <div style={{
-          marginBottom: '0.5rem',
-          background: 'rgba(10, 12, 20, 0.85)',
+          background: 'rgba(10, 12, 20, 0.9)',
           backdropFilter: 'blur(16px)',
           border: '1px solid rgba(99, 102, 241, 0.3)',
           borderRadius: '12px',
           padding: '1rem',
-          width: '280px',
+          width: '260px',
           boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          order: -1,
         }}>
           {/* Track Name */}
           <div style={{

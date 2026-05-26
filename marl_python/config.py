@@ -51,6 +51,8 @@ class ObsConfig:
     attitude_features: int = 5         # sun_angle, nadir_error, wheel_momentum_x/y/z
     # look-ahead / look-back lag features
     lag_features: int = 4              # kp_3h, f107_3h, kp_6h, f107_6h
+    # Task 8.4: debris features
+    debris_features: int = 2           # conjunction_risk, time_to_tca
     # Goal-conditioned altitude range (Phase A)
     target_alt_min: float = 580.6     # km
     target_alt_max: float = 610.6      # km
@@ -63,7 +65,8 @@ class ObsConfig:
                 self.seu_features + self.fuel_features +
                 self.thermal_features + self.target_alt_features +
                 self.attitude_features +
-                self.lag_features)
+                self.lag_features +
+                self.debris_features)
 
 
 @dataclass
@@ -92,6 +95,9 @@ class RewardConfig:
     w_coast_bonus: float = 2.0         # bonus for coasting (throttle=0, fuel>0)
     # Phase A: thermal management
     w_thermal: float = 50.0            # penalty when T_battery outside [-10, 45]°C
+    # Task 8.4: debris conjunction & CAM
+    w_conjunction: float = 100.0       # penalty when conjunction risk > 0.0
+    w_cam_success: float = 50.0        # bonus when conjunction is cleared safely
 
 
 @dataclass

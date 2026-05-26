@@ -110,18 +110,43 @@ struct InitialState {
     OrbitalElements elements;
 };
 
+// ── Debris Object ────────────────────────────────────────────────
+struct DebrisObject {
+    std::string id;
+    std::string name;
+    double semi_major_axis_m;
+    double eccentricity;
+    double inclination_rad;
+    double raan_rad;
+    double arg_perigee_rad;
+    double mean_anomaly_rad;
+    double mass_kg;
+    double drag_area_m2;
+};
+
+class DebrisCatalog {
+public:
+    bool load(const std::string& json_path);
+    const std::vector<DebrisObject>& debris() const { return debris_; }
+
+private:
+    std::vector<DebrisObject> debris_;
+    static std::string extract_string(const std::string& json, const std::string& key);
+    static double      extract_number(const std::string& json, const std::string& key);
+};
+
 class TLEParser {
 public:
     bool load(const std::string& tle_path);
     const InitialState& state() const { return state_; }
 
-private:
-    InitialState state_;
-
     // Kepler equation solver (Newton-Raphson)
     static double solve_kepler(double M, double e, int max_iter = 30);
     // Convert orbital elements → ECI state vector
     static void elements_to_eci(const OrbitalElements& oe, Vec3& pos, Vec3& vel);
+
+private:
+    InitialState state_;
 };
 
 } // namespace smas

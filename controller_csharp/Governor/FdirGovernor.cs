@@ -138,6 +138,23 @@ public sealed class FdirGovernor
                 overridden = true;
         }
 
+        // ── Debris Collision Avoidance (CAM) Safety Layer ─────────
+        // Active safety governor: if there is an imminent conjunction risk
+        // with LEO debris, override thrusters to perform an emergency
+        // Collision Avoidance Maneuver (CAM).
+        if (state.ConjunctionRisk > 0.8f)
+        {
+            // Radial emergency thrust burn to separate orbits
+            action.ThrustX   = 0f;
+            action.ThrustY   = 0f;
+            // Push up if below nominal, down if above
+            action.ThrustZ   = state.AltitudeKm > 600.0 ? -1.0f : 1.0f;
+            action.Throttle  = 1.0f; // Max thrust
+            action.DeepSleep = 0;    // Wake up to thrust
+            action.PayloadOn = 0;    // Shut down payload to protect it from stress
+            overridden       = true;
+        }
+
         return action;
     }
 
