@@ -15,6 +15,10 @@ constexpr double EARTH_RADIUS_M   = 6371000.0;
 constexpr double EARTH_RADIUS_KM  = 6371.0;
 constexpr double EARTH_GM         = 3.986004418e14;  // m³/s²
 constexpr double EARTH_J2         = 1.08263e-3;
+constexpr double EARTH_J3         = -2.5324859e-6;
+constexpr double EARTH_J4         = -1.61962159e-6;
+constexpr double EARTH_J5         = -2.2771610e-7;
+constexpr double EARTH_J6         = 5.40665e-7;
 constexpr double EARTH_ROTATION   = 7.2921159e-5;    // rad/s
 
 // ── PROBA-1 Platform ──────────────────────────────────────────────

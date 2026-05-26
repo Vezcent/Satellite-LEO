@@ -29,13 +29,14 @@ static constexpr double M_AVG_AMU = 16.0;
 // Shape parameter for Bates-Walker profile (1/km)
 static constexpr double SIGMA    = 0.02;
 
-double NRLMSISEModel::exospheric_temp(double f107, double f107a, double ap) const {
+double NRLMSISEModel::exospheric_temp(double f107, double f107a, double ap, double dst) const {
     // Empirical fit to NRLMSISE-00 exospheric temperature behaviour.
-    // T_inf ≈ 500 + 3.5*F10.7_avg + 1.5*(F10.7 - F10.7_avg) + 1.5*Ap
+    // T_inf ≈ 500 + 3.5*F10.7_avg + 1.5*(F10.7 - F10.7_avg) + 1.5*Ap - 1.5*min(0, Dst)
     double T_inf = 500.0
                  + 3.5 * f107a
                  + 1.5 * (f107 - f107a)
-                 + 1.5 * ap;
+                 + 1.5 * ap
+                 - 1.5 * std::min(0.0, dst);
     return std::max(T_inf, 600.0); // physical floor
 }
 
@@ -61,14 +62,15 @@ double NRLMSISEModel::density(double altitude_km,
                                double lst_hours,
                                double f107,
                                double f107a,
-                               double ap) const {
+                               double ap,
+                               double dst) const {
     if (altitude_km < H_REF) {
         // Below thermosphere — return a high density (not our domain)
         return 1.0e-5;
     }
 
     // 1. Exospheric temperature
-    double T_inf = exospheric_temp(f107, f107a, ap);
+    double T_inf = exospheric_temp(f107, f107a, ap, dst);
 
     // 2. Temperature at altitude
     double T_h = temperature_at_altitude(altitude_km, T_inf);

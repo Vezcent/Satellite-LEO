@@ -28,11 +28,12 @@ public:
                    double lst_hours,
                    double f107,
                    double f107a,
-                   double ap) const;
+                   double ap,
+                   double dst) const;
 
 private:
     // Exospheric temperature model
-    double exospheric_temp(double f107, double f107a, double ap) const;
+    double exospheric_temp(double f107, double f107a, double ap, double dst) const;
 
     // Temperature at altitude using Bates-Walker profile
     double temperature_at_altitude(double altitude_km, double T_inf) const;

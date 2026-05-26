@@ -67,7 +67,20 @@ bool SpaceWeatherTable::load(const std::string& csv_path) {
         records_.push_back(rec);
     }
 
-    std::cout << "[SpaceWeather] Loaded " << records_.size() << " records.\n";
+    // Pre-compute 81-day centered moving average of F10.7 (972 hours before & after)
+    for (size_t i = 0; i < records_.size(); ++i) {
+        double sum = 0.0;
+        int count = 0;
+        int start = std::max(0, static_cast<int>(i) - 972);
+        int end = std::min(static_cast<int>(records_.size()) - 1, static_cast<int>(i) + 972);
+        for (int j = start; j <= end; ++j) {
+            sum += records_[j].f107;
+            count++;
+        }
+        records_[i].f107a = (count > 0) ? (sum / count) : records_[i].f107;
+    }
+
+    std::cout << "[SpaceWeather] Loaded " << records_.size() << " records with pre-computed F10.7a.\n";
     return !records_.empty();
 }
 
@@ -107,6 +120,7 @@ SpaceWeatherRecord SpaceWeatherTable::interpolate(double hours_since_epoch) cons
     r.dst  = a.dst   + frac * (b.dst  - a.dst);
     r.ap   = a.ap   + frac * (b.ap   - a.ap);
     r.f107 = a.f107 + frac * (b.f107 - a.f107);
+    r.f107a = a.f107a + frac * (b.f107a - a.f107a);
     return r;
 }
 

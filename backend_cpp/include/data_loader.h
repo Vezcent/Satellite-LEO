@@ -18,6 +18,7 @@ struct SpaceWeatherRecord {
     double  dst;      // Dst index (nT)
     double  ap;       // Ap index
     double  f107;     // F10.7 solar radio flux (sfu)
+    double  f107a;    // 81-day centered average of F10.7
 };
 
 // ── Space Weather Table (time-indexed) ────────────────────────────

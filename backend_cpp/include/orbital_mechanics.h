@@ -10,8 +10,11 @@ namespace smas {
 
 // ── Acceleration Models ───────────────────────────────────────────
 
-// Gravitational acceleration (point-mass + J2 oblateness).
+// Gravitational acceleration (point-mass + J2-J6 zonal harmonics).
 // pos_m: satellite ECI position (metres).
+Vec3 gravity_high_fidelity(const Vec3& pos_m);
+
+// Keep gravity_j2 for backwards compatibility / reference
 Vec3 gravity_j2(const Vec3& pos_m);
 
 // Aerodynamic drag acceleration.
@@ -40,6 +43,9 @@ struct AccelParams {
     double area_m2;
     double mass_kg;
     Vec3   thrust_accel;  // pre-computed thrust accel (m/s²)
+    int    year;          // time context for third-body ephemerides
+    int    doy;
+    double hour_utc;
 };
 
 Vec3 total_acceleration(const Vec3& pos_m, const Vec3& vel_ms,

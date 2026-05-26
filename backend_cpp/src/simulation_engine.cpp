@@ -220,8 +220,8 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
 
     // Atmospheric density
     double rho = atmosphere_.density(geo.altitude_km, geo.latitude_deg,
-                                      lst, weather.f107, weather.f107,
-                                      weather.ap) * cfg_.density_multiplier;
+                                      lst, weather.f107, weather.f107a,
+                                      weather.ap, weather.dst) * cfg_.density_multiplier;
 
     // SAA flux
     SAAFluxPoint flux = saa_.lookup(geo.latitude_deg, geo.longitude_deg);
@@ -258,6 +258,11 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     ap.cd      = cfg_.enable_drift ? drift_.cd() : constants::SAT_CD_NOMINAL;
     ap.area_m2 = constants::SAT_AREA_M2;
     ap.mass_kg = current_mass;
+    ap.year    = sim_time_struct_.year;
+    ap.doy     = sim_time_struct_.doy;
+    ap.hour_utc = sim_time_struct_.hour + 
+                  (sim_time_struct_.total_seconds -
+                   static_cast<int>(sim_time_struct_.total_seconds / 3600.0) * 3600.0) / 3600.0;
 
     // Build thrust acceleration (disabled if fuel depleted)
     Vec3 thrust_accel_vec(0.0, 0.0, 0.0);
