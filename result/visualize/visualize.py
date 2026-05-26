@@ -1,7 +1,7 @@
 """
 S-MAS Mission Analysis & Visualization
-Upgraded: 5 subplots (Altitude, SoC+Capacity, Activity, FDIR, SEU),
-survival curve mode, and environment config tracking.
+Upgraded: 5 subplots basic, plus 3 advanced panels (Thermal, ADCS, Propulsion) 
+tracking Phase A, B, and C environment & vehicle states.
 """
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -24,13 +24,164 @@ def find_latest_log():
     log_pattern = os.path.join(BASE_DIR, "controller_csharp", "bin", "Release", "net10.0", "logs", "session_*.csv")
     logs = glob.glob(log_pattern)
     if not logs:
+        # Fallback to local logs directory just in case
+        log_pattern_fallback = os.path.join(BASE_DIR, "controller_csharp", "logs", "session_*.csv")
+        logs = glob.glob(log_pattern_fallback)
+        
+    if not logs:
         print("No log files found in default location.")
         return None
     return max(logs, key=os.path.getmtime)
 
 
-def visualize_results(log_path=None, seu_mult=1.0, title=None):
-    """Generate 5-subplot analysis from a simulation log CSV."""
+def plot_thermal(df, time_hours, timestamp, seu_mult, title_suffix):
+    """Generate and save thermal subsystem analysis plot."""
+    fig, axes = plt.subplots(3, 1, figsize=(15, 10), sharex=True)
+    fig.suptitle(f"S-MAS Thermal Subsystem Analysis (SEU {seu_mult}x)\n{title_suffix}", fontsize=14, fontweight='bold')
+    
+    # Subplot 1: Temperatures
+    ax1 = axes[0]
+    if 'temp_bus' in df.columns:
+        ax1.plot(time_hours, df['temp_bus'], color='#ec4899', linewidth=1.0, label='Bus Temp (°C)')
+    if 'temp_battery' in df.columns:
+        ax1.plot(time_hours, df['temp_battery'], color='#f97316', linewidth=1.0, label='Battery Temp (°C)')
+    if 'temp_payload' in df.columns:
+        ax1.plot(time_hours, df['temp_payload'], color='#ef4444', linewidth=1.0, label='Payload Temp (°C)')
+    
+    ax1.axhline(y=0, color='blue', linestyle=':', alpha=0.5, label='0°C Limit')
+    ax1.axhline(y=45, color='red', linestyle=':', alpha=0.5, label='45°C Limit')
+    ax1.set_ylabel("Temperature (°C)")
+    ax1.grid(True, alpha=0.2)
+    ax1.legend(loc='upper right', fontsize=8)
+    
+    # Subplot 2: Heater
+    ax2 = axes[1]
+    if 'heater_on' in df.columns:
+        ax2.fill_between(time_hours, df['heater_on'], color='#ec4899', alpha=0.3, label='Heater ON', step='mid')
+        ax2.plot(time_hours, df['heater_on'], color='#db2777', linewidth=0.8, drawstyle='steps-mid')
+    ax2.set_ylabel("Heater Status (0/1)")
+    ax2.set_ylim(-0.1, 1.1)
+    ax2.grid(True, alpha=0.2)
+    ax2.legend(loc='upper right', fontsize=8)
+    
+    # Subplot 3: Eclipse & Solar Power
+    ax3 = axes[2]
+    ax3.plot(time_hours, df['solar_power_w'], color='#eab308', linewidth=1.0, label='Solar Power (W)')
+    ax3.set_ylabel("Solar Power (W)", color='#eab308')
+    ax3.tick_params(axis='y', labelcolor='#eab308')
+    
+    if 'in_eclipse' in df.columns:
+        ax3b = ax3.twinx()
+        ax3b.fill_between(time_hours, df['in_eclipse'], color='#6b7280', alpha=0.2, label='In Eclipse', step='mid')
+        ax3b.plot(time_hours, df['in_eclipse'], color='#374151', linewidth=0.5, linestyle='--', drawstyle='steps-mid')
+        ax3b.set_ylabel("Eclipse State (0/1)", color='#374151')
+        ax3b.set_ylim(-0.1, 1.1)
+        ax3b.tick_params(axis='y', labelcolor='#374151')
+        
+    ax3.set_xlabel("Time (Hours)")
+    ax3.grid(True, alpha=0.2)
+    
+    plt.tight_layout()
+    out_path = os.path.join(SAVE_DIR, f"thermal_{timestamp}.png")
+    plt.savefig(out_path, dpi=150)
+    print(f"Thermal plot saved to: {out_path}")
+    plt.close()
+
+
+def plot_adcs(df, time_hours, timestamp, seu_mult, title_suffix):
+    """Generate and save ADCS subsystem analysis plot."""
+    fig, axes = plt.subplots(3, 1, figsize=(15, 10), sharex=True)
+    fig.suptitle(f"S-MAS ADCS Subsystem Analysis (SEU {seu_mult}x)\n{title_suffix}", fontsize=14, fontweight='bold')
+    
+    # Subplot 1: Nadir Error
+    ax1 = axes[0]
+    if 'nadir_error' in df.columns:
+        ax1.plot(time_hours, df['nadir_error'], color='#a855f7', linewidth=1.0, label='Nadir Error')
+        ax1.axhline(y=0.1, color='#ef4444', linestyle='--', alpha=0.5, label='Pointing Tolerance')
+    ax1.set_ylabel("Nadir Error (rad)")
+    ax1.grid(True, alpha=0.2)
+    ax1.legend(loc='upper right', fontsize=8)
+    
+    # Subplot 2: Sun Sensor Angle
+    ax2 = axes[1]
+    if 'sun_angle' in df.columns:
+        ax2.plot(time_hours, df['sun_angle'], color='#eab308', linewidth=1.0, label='Sun Angle (rad)')
+    ax2.set_ylabel("Sun Angle (rad)")
+    ax2.grid(True, alpha=0.2)
+    ax2.legend(loc='upper right', fontsize=8)
+    
+    # Subplot 3: Reaction Wheel Momentum
+    ax3 = axes[2]
+    if 'wheel_momentum_x' in df.columns:
+        ax3.plot(time_hours, df['wheel_momentum_x'], color='#3b82f6', linewidth=0.8, label='Wheel X')
+    if 'wheel_momentum_y' in df.columns:
+        ax3.plot(time_hours, df['wheel_momentum_y'], color='#22c55e', linewidth=0.8, label='Wheel Y')
+    if 'wheel_momentum_z' in df.columns:
+        ax3.plot(time_hours, df['wheel_momentum_z'], color='#ec4899', linewidth=0.8, label='Wheel Z')
+    ax3.set_xlabel("Time (Hours)")
+    ax3.set_ylabel("Momentum (Nms)")
+    ax3.grid(True, alpha=0.2)
+    ax3.legend(loc='upper right', fontsize=8)
+    
+    plt.tight_layout()
+    out_path = os.path.join(SAVE_DIR, f"adcs_{timestamp}.png")
+    plt.savefig(out_path, dpi=150)
+    print(f"ADCS plot saved to: {out_path}")
+    plt.close()
+
+
+def plot_propulsion(df, time_hours, timestamp, seu_mult, title_suffix):
+    """Generate and save propulsion and orbit decay plot."""
+    fig, axes = plt.subplots(3, 1, figsize=(15, 10), sharex=True)
+    fig.suptitle(f"S-MAS Propulsion & Fuel Analysis (SEU {seu_mult}x)\n{title_suffix}", fontsize=14, fontweight='bold')
+    
+    # Subplot 1: Fuel Fraction
+    ax1 = axes[0]
+    if 'fuel_fraction' in df.columns:
+        ax1.fill_between(time_hours, df['fuel_fraction'] * 100, color='#06b6d4', alpha=0.2)
+        ax1.plot(time_hours, df['fuel_fraction'] * 100, color='#0891b2', linewidth=1.2, label='Fuel Fraction %')
+        ax1.set_ylim(-5, 105)
+    ax1.set_ylabel("Fuel (%)")
+    ax1.grid(True, alpha=0.2)
+    ax1.legend(loc='upper right', fontsize=8)
+    
+    # Subplot 2: Thrust vector & Throttle
+    ax2 = axes[1]
+    if 'thrust_x' in df.columns:
+        ax2.plot(time_hours, df['thrust_x'], color='#ef4444', linewidth=0.8, alpha=0.8, label='Thrust X')
+    if 'thrust_y' in df.columns:
+        ax2.plot(time_hours, df['thrust_y'], color='#22c55e', linewidth=0.8, alpha=0.8, label='Thrust Y')
+    if 'thrust_z' in df.columns:
+        ax2.plot(time_hours, df['thrust_z'], color='#3b82f6', linewidth=0.8, alpha=0.8, label='Thrust Z')
+    ax2.set_ylabel("Thrust Vector (N)")
+    ax2.grid(True, alpha=0.2)
+    ax2.legend(loc='upper right', fontsize=8)
+    
+    # Subplot 3: Drag vs Density
+    ax3 = axes[2]
+    if 'atm_density' in df.columns:
+        ax3.plot(time_hours, df['atm_density'], color='#6b7280', linewidth=1.0, label='Atm Density (kg/m³)')
+        ax3.set_ylabel("Density (kg/m³)", color='#6b7280')
+        ax3.tick_params(axis='y', labelcolor='#6b7280')
+        
+    if 'drag_coeff' in df.columns:
+        ax3b = ax3.twinx()
+        ax3b.plot(time_hours, df['drag_coeff'], color='#ef4444', linestyle='--', linewidth=0.8, label='Cd')
+        ax3b.set_ylabel("Cd", color='#ef4444')
+        ax3b.tick_params(axis='y', labelcolor='#ef4444')
+        
+    ax3.set_xlabel("Time (Hours)")
+    ax3.grid(True, alpha=0.2)
+    
+    plt.tight_layout()
+    out_path = os.path.join(SAVE_DIR, f"propulsion_{timestamp}.png")
+    plt.savefig(out_path, dpi=150)
+    print(f"Propulsion plot saved to: {out_path}")
+    plt.close()
+
+
+def visualize_results(log_path=None, seu_mult=1.0, title=None, advanced=False):
+    """Generate basic and optional advanced subsystem analysis plots."""
     os.makedirs(SAVE_DIR, exist_ok=True)
 
     if not log_path:
@@ -70,9 +221,11 @@ def visualize_results(log_path=None, seu_mult=1.0, title=None):
         fdir_safe_pct = (df['fdir_mode'] == 2).sum() / len(df) * 100
 
     time_hours = df['sim_time_s'] / 3600
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    title_suffix = os.path.basename(log_path)
 
-    # ── Generate Plots (5 subplots) ──
-    fig_title = title or f"S-MAS Mission Analysis (SEU {seu_mult}x)\n{os.path.basename(log_path)}"
+    # ── Generate Plots (5 subplots basic) ──
+    fig_title = title or f"S-MAS Mission Analysis (SEU {seu_mult}x)\n{title_suffix}"
     fig, axes = plt.subplots(5, 1, figsize=(15, 16), sharex=True)
     fig.suptitle(fig_title, fontsize=16, fontweight='bold')
 
@@ -109,7 +262,7 @@ def visualize_results(log_path=None, seu_mult=1.0, title=None):
     ax3.grid(True, alpha=0.2)
     ax3.legend(loc='upper right', fontsize=8)
 
-    # Subplot 4: FDIR Mode Timeline (NEW)
+    # Subplot 4: FDIR Mode Timeline
     ax4 = axes[3]
     if 'fdir_mode' in df.columns:
         fdir = df['fdir_mode'].values
@@ -125,7 +278,7 @@ def visualize_results(log_path=None, seu_mult=1.0, title=None):
     ax4.legend(loc='upper right', fontsize=8, ncol=4)
     ax4.grid(True, alpha=0.2)
 
-    # Subplot 5: SEU Events (NEW)
+    # Subplot 5: SEU Events
     ax5 = axes[4]
     if 'seu_active' in df.columns:
         seu_mask = df['seu_active'] == 1
@@ -144,12 +297,18 @@ def visualize_results(log_path=None, seu_mult=1.0, title=None):
 
     plt.tight_layout(rect=[0, 0.02, 1, 0.95])
 
-    # Save Plot
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Save Basic Plot
     plot_name = f"analysis_{timestamp}.png"
     plt.savefig(os.path.join(SAVE_DIR, plot_name), dpi=150)
-    print(f"Plot saved to: {os.path.join(SAVE_DIR, plot_name)}")
+    print(f"Basic plot saved to: {os.path.join(SAVE_DIR, plot_name)}")
     plt.close()
+
+    # ── Advanced Diagnostic Plots ──
+    if advanced:
+        print("Generating advanced phase-C subsystem diagnostic plots...")
+        plot_thermal(df, time_hours, timestamp, seu_mult, title_suffix)
+        plot_adcs(df, time_hours, timestamp, seu_mult, title_suffix)
+        plot_propulsion(df, time_hours, timestamp, seu_mult, title_suffix)
 
     # ── Save Summary CSV ──
     summary_data = {
@@ -163,7 +322,7 @@ def visualize_results(log_path=None, seu_mult=1.0, title=None):
         "avg_altitude_km": [round(avg_alt, 2)],
         "final_status": ["DECEASED" if last_step['is_done'] else "ACTIVE"],
         "death_reason": [last_step['done_reason']],
-        # New columns for environment & FDIR analysis
+        # Environmental config
         "seu_multiplier": [seu_mult],
         "total_seu_events": [total_seu],
         "fdir_degraded_pct": [round(fdir_degraded_pct, 2)],
@@ -259,6 +418,7 @@ def main():
     parser.add_argument('log_path', nargs='?', default=None, help='Path to session CSV log')
     parser.add_argument('--seu-mult', type=float, default=1.0, help='SEU multiplier for labeling')
     parser.add_argument('--title', type=str, default=None, help='Custom plot title')
+    parser.add_argument('--advanced', action='store_true', help='Generate advanced Phase-C thermal, ADCS, and propulsion plots')
     parser.add_argument('--survival-curve', action='store_true', help='Generate survival curve from summaries')
 
     args = parser.parse_args()
@@ -266,7 +426,7 @@ def main():
     if args.survival_curve:
         survival_curve()
     else:
-        visualize_results(args.log_path, args.seu_mult, args.title)
+        visualize_results(args.log_path, args.seu_mult, args.title, args.advanced)
 
 
 if __name__ == "__main__":

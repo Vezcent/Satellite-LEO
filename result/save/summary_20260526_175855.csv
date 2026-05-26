@@ -1,0 +1,2 @@
+timestamp,log_file,lifetime_days,lifetime_hours,lifetime_mins,avg_soc_pct,payload_duty_cycle_pct,avg_altitude_km,final_status,death_reason,seu_multiplier,total_seu_events,fdir_degraded_pct,fdir_safe_pct
+20260526_175855,session_20260525_011857.csv,666,3,36,95.47,37.67,565.3,DECEASED,1.0,1,1,0.09,0.09
