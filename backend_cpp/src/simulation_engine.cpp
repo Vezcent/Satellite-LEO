@@ -65,6 +65,7 @@ void SimulationEngine::reset() {
     // Tracking
     time_since_contact_ = 0.0;
     fdir_mode_ = FDIRMode::NOMINAL;
+    data_buffer_mb_ = 0.0;
 
     // State
     std::memset(&state_, 0, sizeof(state_));
@@ -229,11 +230,23 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     Vec3 sun = approximate_sun_direction(sim_time_struct_.year,
                                           sim_time_struct_.doy,
                                           sim_time_struct_.hour);
-    bool eclipse = is_in_eclipse(orbit_.pos, sun);
+    double penumbra_factor = get_penumbra_factor(orbit_.pos, sun);
+    bool eclipse = (penumbra_factor < 0.5);
 
-    // Ground station visibility
-    uint8_t gs_mask = visible_stations_mask(orbit_.pos,
-                                             gs_list_.stations(), gmst);
+    // Ground station visibility (RF link budget SNR check)
+    double max_snr_db = -999.0;
+    uint8_t gs_mask = 0;
+    for (size_t i = 0; i < gs_list_.stations().size() && i < 8; ++i) {
+        double snr_db = -999.0;
+        double range_m = 0.0;
+        bool visible = is_visible_link(orbit_.pos, gs_list_.stations()[i], gmst, snr_db, range_m);
+        if (visible) {
+            gs_mask |= (1u << i);
+        }
+        if (snr_db > max_snr_db) {
+            max_snr_db = snr_db;
+        }
+    }
 
     // ── 5. Orbital integration ────────────────────────────────────────
     // Dynamic mass: account for fuel consumption
@@ -283,14 +296,14 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     // ── 6. Power subsystem ────────────────────────────────────────
     double panel_eff = cfg_.enable_drift ? drift_.panel_efficiency() : 1.0;
     double cos_sun = attitude_.cos_sun_angle();
-    bus_.update(eclipse, panel_eff,
+    bus_.update(penumbra_factor, panel_eff,
                 exec_action.deep_sleep != 0,
                 exec_action.payload_on != 0,
                 cos_sun,
                 constants::DT);
 
     // ── 6.5 Thermal subsystem (Phase A) ──────────────────────────
-    thermal_.update(eclipse, bus_.solar_power_w(),
+    thermal_.update(penumbra_factor, bus_.solar_power_w(),
                     bus_.power_draw_w(), constants::DT);
     bus_.apply_thermal_factor(thermal_.battery_temp_factor());
     double heater_w = thermal_.heater_power_w();
@@ -299,8 +312,22 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     }
 
     // ── 7. Communication tracking ─────────────────────────────────
+    // Camera data generation (10 Mbps = 1.25 MB/s)
+    if (exec_action.payload_on != 0) {
+        double data_generated = 1.25 * constants::DT;
+        data_buffer_mb_ += data_generated;
+        if (data_buffer_mb_ > 256.0) {
+            data_buffer_mb_ = 256.0;
+        }
+    }
+
+    // Downlink (1 Mbps = 0.125 MB/s)
     if (gs_mask != 0) {
         time_since_contact_ = 0.0;
+        double data_downlinked = 0.125 * constants::DT;
+        if (data_buffer_mb_ > 0.0) {
+            data_buffer_mb_ -= std::min(data_buffer_mb_, data_downlinked);
+        }
     } else {
         time_since_contact_ += constants::DT;
     }
@@ -329,7 +356,7 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     DoneReason done = bus_.check_failure(time_since_contact_, alt, seu_fatal);
 
     // ── 10. Build state packet ────────────────────────────────────
-    state_.version = 1;
+    state_.version = 4;
     state_.sim_time_s = orbit_.time;
     state_.year = sim_time_struct_.year;
     state_.doy  = sim_time_struct_.doy;
@@ -400,6 +427,10 @@ StatePacket SimulationEngine::step(const ActionPacket& raw_action) {
     state_.wheel_momentum_x = static_cast<float>(attitude_.state().wheel_h[0]);
     state_.wheel_momentum_y = static_cast<float>(attitude_.state().wheel_h[1]);
     state_.wheel_momentum_z = static_cast<float>(attitude_.state().wheel_h[2]);
+
+    // Comms & Data (Phase B Step 7)
+    state_.data_buffer_mb = static_cast<float>(data_buffer_mb_);
+    state_.snr_db         = static_cast<float>(max_snr_db);
 
     return state_;
 }

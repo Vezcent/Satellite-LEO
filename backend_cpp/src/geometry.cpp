@@ -86,27 +86,59 @@ Vec3 approximate_sun_direction(int year, int doy, double hour_utc) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Eclipse Detection (Cylindrical Shadow Model)
+//  Eclipse Detection (Conical Shadow Model with Penumbra & Oblate Earth)
 // ═══════════════════════════════════════════════════════════════════
 
+double get_penumbra_factor(const Vec3& sat_pos_m, const Vec3& sun_dir) {
+    // Distance along the shadow axis (away from Sun)
+    double s = -sat_pos_m.dot(sun_dir);
+    if (s <= 0.0) {
+        // Satellite is on the sunlit side of the Earth
+        return 1.0;
+    }
+
+    // Projection of satellite onto the terminator plane (perpendicular to sun_dir)
+    Vec3 proj = sat_pos_m + sun_dir * s;
+    double d = proj.magnitude();
+
+    // Earth parameters (WGS84)
+    double R_eq = 6378137.0;       // equatorial radius (m)
+    double f = 1.0 / 298.257223563; // flattening
+
+    double sin2_phi_p = 0.0;
+    if (d > 1e-6) {
+        double sin_phi_p = proj.z / d;
+        sin2_phi_p = sin_phi_p * sin_phi_p;
+    }
+    double R_eff = R_eq * (1.0 - f * sin2_phi_p);
+
+    // Sun parameters
+    double R_sun = 6.9634e8;        // Sun radius (m)
+    double d_sun = 1.496e11;        // Earth-Sun distance (1 AU)
+
+    // Conical shadow radii at distance s
+    double R_u = R_eff - s * (R_sun - R_eff) / d_sun;
+    double R_p = R_eff + s * (R_sun + R_eff) / d_sun;
+
+    if (d <= R_u) {
+        return 0.0; // Umbra (full shadow)
+    }
+    if (d >= R_p) {
+        return 1.0; // Fully illuminated
+    }
+
+    // Penumbra (partial shadow) - linear interpolation
+    double factor = (d - R_u) / (R_p - R_u);
+    return smas::compat::clamp(factor, 0.0, 1.0);
+}
+
 bool is_in_eclipse(const Vec3& sat_pos_m, const Vec3& sun_dir) {
-    // Cylindrical shadow model:
-    // The satellite is in shadow if:
-    //   1. It is on the anti-sun side of Earth (dot(pos, sun) < 0)
-    //   2. Its distance from the Earth-Sun line < R_Earth
-
-    double dot = sat_pos_m.dot(sun_dir);
-    if (dot > 0.0) return false; // sunlit side
-
-    // Project satellite position onto plane perpendicular to sun vector
-    Vec3 proj = sat_pos_m - sun_dir * dot;
-    double perp_dist = proj.magnitude();
-
-    return perp_dist < constants::EARTH_RADIUS_M;
+    double factor = get_penumbra_factor(sat_pos_m, sun_dir);
+    return factor < 0.5;
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Line-of-Sight to Ground Stations
+//  Line-of-Sight & RF Link to Ground Stations
 // ═══════════════════════════════════════════════════════════════════
 
 // Convert ground station lat/lon/alt to ECEF position
@@ -145,11 +177,72 @@ double elevation_angle(const Vec3& sat_pos_m,
     return std::asin(smas::compat::clamp(sinElev, -1.0, 1.0)) * constants::RAD2DEG;
 }
 
+bool is_visible_link(const Vec3& sat_pos_m,
+                     const GroundStation& gs,
+                     double gmst_rad,
+                     double& out_snr_db,
+                     double& out_slant_range_m) {
+    double elev = elevation_angle(sat_pos_m, gs, gmst_rad);
+    if (elev < gs.min_elevation_deg) {
+        out_snr_db = -999.0;
+        out_slant_range_m = (sat_pos_m - ecef_to_eci(gs_to_ecef(gs), gmst_rad)).magnitude();
+        return false;
+    }
+
+    // Slant range
+    Vec3 gs_ecef = gs_to_ecef(gs);
+    Vec3 gs_eci  = ecef_to_eci(gs_ecef, gmst_rad);
+    Vec3 diff = sat_pos_m - gs_eci;
+    double range = diff.magnitude();
+    out_slant_range_m = range;
+
+    // Antenna off-nadir angle (assuming satellite is nadir-pointing)
+    // Sat vector: sat_pos_m
+    // Vector from satellite to ground station: -diff
+    // cos(off_nadir) = (sat_pos_m . diff) / (sat_pos_m.magnitude() * range)
+    double sat_norm = sat_pos_m.magnitude();
+    double cos_off_nadir = (range > 0.0 && sat_norm > 0.0) ? sat_pos_m.dot(diff) / (sat_norm * range) : 1.0;
+    cos_off_nadir = smas::compat::clamp(cos_off_nadir, -1.0, 1.0);
+    double off_nadir_angle = std::acos(cos_off_nadir);
+
+    // Antenna gain (0 dBi peak, cosine roll-off)
+    double G_t = 1.0; // 0 dBi = 1.0 linear
+    if (off_nadir_angle < constants::PI / 2.0) {
+        G_t = std::cos(off_nadir_angle);
+    } else {
+        G_t = 0.0;
+    }
+
+    // Path loss (FSPL)
+    double freq = 2.2e9; // 2.2 GHz S-band
+    double c = 299792458.0;
+    double lambda = c / freq;
+    double path_loss = std::pow((4.0 * constants::PI * range) / lambda, 2.0);
+
+    // Rx Gain: 30 dBi = 1000.0 linear
+    double G_r = 1000.0;
+
+    // Tx Power: 2 W
+    double P_t = 2.0;
+
+    // Received Power
+    double P_r = (path_loss > 0.0) ? (P_t * G_t * G_r) / path_loss : 0.0;
+
+    // Noise power: N = k T B
+    // T = 290 K, B = 1 MHz
+    double N = constants::BOLTZMANN * 290.0 * 1.0e6;
+
+    double snr = (N > 0.0) ? P_r / N : 0.0;
+    out_snr_db = (snr > 0.0) ? 10.0 * std::log10(snr) : -999.0;
+
+    return out_snr_db >= 10.0;
+}
+
 bool is_visible(const Vec3& sat_pos_m,
                 const GroundStation& gs,
                 double gmst_rad) {
-    double elev = elevation_angle(sat_pos_m, gs, gmst_rad);
-    return elev >= gs.min_elevation_deg;
+    double snr_db, range_m;
+    return is_visible_link(sat_pos_m, gs, gmst_rad, snr_db, range_m);
 }
 
 uint8_t visible_stations_mask(const Vec3& sat_pos_m,

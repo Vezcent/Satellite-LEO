@@ -81,6 +81,9 @@ class StatePacket(ct.Structure):
         ("wheel_momentum_x",    ct.c_float),
         ("wheel_momentum_y",    ct.c_float),
         ("wheel_momentum_z",    ct.c_float),
+        # Comms & Data (Phase B Step 7)
+        ("data_buffer_mb",      ct.c_float),
+        ("snr_db",              ct.c_float),
     ]
 
 

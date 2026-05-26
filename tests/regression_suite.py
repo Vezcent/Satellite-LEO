@@ -13,8 +13,8 @@ from config import EnvConfig, ObsConfig
 
 class TestABI(unittest.TestCase):
     def test_statepacket_size(self):
-        """Verify that Python ctypes StatePacket matches version 3 size of 222 bytes."""
-        self.assertEqual(ct.sizeof(StatePacket), 222)
+        """Verify that Python ctypes StatePacket matches version 4 size of 230 bytes."""
+        self.assertEqual(ct.sizeof(StatePacket), 230)
 
     def test_actionpacket_size(self):
         """Verify that Python ctypes ActionPacket matches version 1 size of 20 bytes."""

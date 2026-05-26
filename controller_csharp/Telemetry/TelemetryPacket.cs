@@ -20,11 +20,12 @@ public static class TelemetryPacket
     /// <summary>
     /// Serialise a simulation frame into a binary telemetry packet.
     /// </summary>
+    /// <param name="satId">Satellite ID.</param>
     /// <param name="seq">Frame sequence number.</param>
     /// <param name="state">Current StatePacket from C++.</param>
     /// <param name="action">ActionPacket that was sent.</param>
     /// <param name="fdirOverridden">Whether the FDIR governor overrode any actions.</param>
-    public static byte[] Serialise(uint seq, in StatePacket state, in ActionPacket action, bool fdirOverridden)
+    public static byte[] Serialise(byte satId, uint seq, in StatePacket state, in ActionPacket action, bool fdirOverridden)
     {
         // Payload: key telemetry fields in compact binary form
         // This is a curated subset — sending the full 184B StatePacket + extras
@@ -75,16 +76,21 @@ public static class TelemetryPacket
         bw.Write(state.WheelMomentumY);
         bw.Write(state.WheelMomentumZ);
 
+        // Comms & Data (Phase B Step 7)
+        bw.Write(state.DataBufferMb);
+        bw.Write(state.SnrDb);
+
         bw.Flush();
         byte[] payload = ms.ToArray();
 
         // ── Build full packet ──
-        // [Version(1) | Seq(4) | PayloadLen(4) | Payload(N) | CRC32(4)]
-        int totalLen = 1 + 4 + 4 + payload.Length + 4;
+        // [Version(1) | SatID(1) | Seq(4) | PayloadLen(4) | Payload(N) | CRC32(4)]
+        int totalLen = 1 + 1 + 4 + 4 + payload.Length + 4;
         byte[] packet = new byte[totalLen];
         int offset = 0;
 
         packet[offset++] = PacketVersion;
+        packet[offset++] = satId;
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(offset), seq);
         offset += 4;
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(offset), (uint)payload.Length);

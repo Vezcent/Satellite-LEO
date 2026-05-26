@@ -61,7 +61,7 @@ public static class Program
 
     private static async Task<int> RunSimulation(Config config)
     {
-        Console.WriteLine("  Mode: LIVE SIMULATION");
+        Console.WriteLine("  Mode: LIVE CONSTELLATION SIMULATION");
         Console.WriteLine($"  Data dir:  {config.DataDir}");
         Console.WriteLine($"  Model dir: {config.ModelDir}");
         Console.WriteLine($"  Steps:     {config.MaxSteps}");
@@ -70,21 +70,39 @@ public static class Program
         Console.WriteLine($"  WebSocket: {(config.NoWebSocket ? "DISABLED" : $"ws://localhost:{config.Port}/")}");
         Console.WriteLine();
 
-        // ── 1. Create + Init Physics Engine ──────────────────────
-        using var engine = new PhysicsEngine(config.DataDir, config.Seed);
-        engine.ValidateAbi();
-        engine.Init();
-        Console.WriteLine("  C++ physics engine initialised ✓");
+        const int NUM_SATS = 4;
+
+        // ── 1. Create + Init Physics Engines ─────────────────────
+        var engines = new PhysicsEngine[NUM_SATS];
+        var governors = new FdirGovernor[NUM_SATS];
+        var obsBuilders = new ObservationBuilder[NUM_SATS];
+        var logDir = Path.Combine(Path.GetDirectoryName(typeof(Program).Assembly.Location) ?? ".", "logs");
+        var loggers = new TelemetryLogger[NUM_SATS];
+        var states = new StatePacket[NUM_SATS];
+        var actions = new ActionPacket[NUM_SATS];
+
+        int[] seeds = { 42, 43, 44, 45 };
+        double[] timeOffsets = { 0.0, 21600.0, 43200.0, 64800.0 }; // Phasing offsets (6h apart in orbit)
+
+        for (int i = 0; i < NUM_SATS; i++)
+        {
+            engines[i] = new PhysicsEngine(config.DataDir, (ulong)seeds[i]);
+            engines[i].ValidateAbi();
+            engines[i].Init();
+            engines[i].Reset();
+            engines[i].SetTime(timeOffsets[i]);
+
+            governors[i] = new FdirGovernor();
+            obsBuilders[i] = new ObservationBuilder();
+            loggers[i] = new TelemetryLogger(logDir, i);
+            states[i] = new StatePacket();
+            actions[i] = ActionPacket.CreateNoOp();
+        }
+        Console.WriteLine($"  {NUM_SATS} C++ physics engine instances initialised ✓");
 
         // ── 2. Load ONNX Models ──────────────────────────────────
         using var inference = new InferenceEngine(config.ModelDir);
         Console.WriteLine();
-
-        // ── 3. Create Components ─────────────────────────────────
-        var obsBuilder = new ObservationBuilder();
-        var governor = new FdirGovernor();
-        var logDir = Path.Combine(Path.GetDirectoryName(typeof(Program).Assembly.Location) ?? ".", "logs");
-        using var logger = new TelemetryLogger(logDir);
 
         // ── 4. WebSocket Server (optional) ───────────────────────
         WebSocketServer? wsServer = null;
@@ -100,207 +118,243 @@ public static class Program
             wsServer.Start();
         }
 
-        // ── 5. Reset Engine ──────────────────────────────────────
-        engine.Reset();
+        // ── 5. Set Target Altitudes ──────────────────────────────
         if (config.TargetAlt.HasValue)
         {
-            engine.SetTargetAltitude(config.TargetAlt.Value);
-            obsBuilder.TargetAltKm = config.TargetAlt.Value;
+            for (int i = 0; i < NUM_SATS; i++)
+            {
+                engines[i].SetTargetAltitude(config.TargetAlt.Value);
+                obsBuilders[i].TargetAltKm = config.TargetAlt.Value;
+            }
             groundCmd.TargetAltitudeKm = config.TargetAlt.Value;
-            Console.WriteLine($"  [INIT] Set target altitude to: {config.TargetAlt.Value} km");
+            Console.WriteLine($"  [INIT] Set target altitude to: {config.TargetAlt.Value} km for all satellites");
         }
         Console.WriteLine();
-        Console.WriteLine("  Starting simulation loop...");
+        Console.WriteLine("  Starting constellation simulation loop...");
         Console.WriteLine("  ────────────────────────────────────────────────────────");
 
-        var state = new StatePacket();
         var initAction = ActionPacket.CreateNoOp();
-
-        // Initial step to get state
-        engine.Step(ref initAction, ref state);
+        for (int i = 0; i < NUM_SATS; i++)
+        {
+            engines[i].Step(ref initAction, ref states[i]);
+        }
 
         int step = 0;
-        int fdirOverrides = 0;
-        int payloadOnSteps = 0;
-        int eclipseSteps = 0;
-        int saaSteps = 0;
+        int[] fdirOverrides = new int[NUM_SATS];
+        int[] payloadOnSteps = new int[NUM_SATS];
+        int[] eclipseSteps = new int[NUM_SATS];
+        int[] saaSteps = new int[NUM_SATS];
 
         // ── 6. Main Simulation Loop ──────────────────────────────
-        while (step < config.MaxSteps && state.IsDone == 0)
+        while (step < config.MaxSteps && !engines.All(e => e.IsDone))
         {
-            // a. Build normalised observation
-            float[] obs = obsBuilder.Build(in state);
-
-            // b. Run ONNX inference (or use manual override)
-            ActionPacket action;
-            bool overridden;
-
-            if (groundCmd.ManualOverride)
-            {
-                action = groundCmd.ManualAction;
-                action.Version = 1;
-                overridden = true;
-            }
-            else
-            {
-                AgentActions aiActions = inference.Infer(obs);
-                action = governor.Apply(aiActions, in state, out overridden);
-            }
-            if (overridden) fdirOverrides++;
-
-            // c. Apply ground command overrides
-            if (groundCmd.InjectSeu)
-            {
-                action.InjectSeu = 1;
-                groundCmd.InjectSeu = false; // one-shot
-            }
-
-            // c2. Altitude hold correction — P-controller overlay on AI thrust
-            //     AI was trained for 600km, so we add a radial correction
-            //     when ground station sets a different target altitude.
-            if (!groundCmd.ManualOverride && Math.Abs(groundCmd.TargetAltitudeKm - 600.0) > 1.0)
-            {
-                double altError = groundCmd.TargetAltitudeKm - state.AltitudeKm; // km
-                // Proportional gain: 0.005 thrust per km error, clamped to ±0.5
-                float correction = (float)Math.Clamp(altError * 0.005, -0.5, 0.5);
-
-                // Apply radial boost via Z-thrust (+ = raise orbit, - = lower orbit)
-                action.ThrustZ = Math.Clamp(action.ThrustZ + correction, -1f, 1f);
-
-                // Increase throttle proportionally to error magnitude
-                float throttleBoost = (float)Math.Min(Math.Abs(altError) * 0.002, 0.3);
-                action.Throttle = Math.Clamp(action.Throttle + throttleBoost, 0f, 1f);
-            }
-
-            if (groundCmd.ForcedFdirMode.HasValue)
-            {
-                // Will be applied after step by overwriting state.FdirMode
-            }
+            // Apply one-shot inject SEU
+            bool injectSeu = groundCmd.InjectSeu;
+            if (injectSeu) groundCmd.InjectSeu = false;
 
             if (groundCmd.PresetDirty)
             {
                 string preset = groundCmd.ActivePresetName;
                 groundCmd.PresetDirty = false;
                 
-                Console.WriteLine($"  [PRESET] Applying preset: {preset}");
+                double seu = 1.0, noise = 1.0, drift = 1.0, density = 0.01;
+                double baseTime = 0.0;
                 switch (preset)
                 {
                     case "solarmax":
-                        engine.SetEnvironment(5.0, 1.2, 1.5, 0.3);
-                        engine.SetTime(86400 * 180);
-                        groundCmd.SeuMultiplier = 5.0;
-                        groundCmd.NoiseMultiplier = 1.2;
-                        groundCmd.DriftMultiplier = 1.5;
-                        groundCmd.DensityMultiplier = 0.3;
+                        seu = 5.0; noise = 1.2; drift = 1.5; density = 0.3;
+                        baseTime = 86400 * 180;
                         break;
                     case "halloween":
-                        engine.SetEnvironment(100.0, 2.0, 1.2, 0.15);
-                        engine.SetTime(120700800.0); // Year 2003, DOY 302
-                        groundCmd.SeuMultiplier = 100.0;
-                        groundCmd.NoiseMultiplier = 2.0;
-                        groundCmd.DriftMultiplier = 1.2;
-                        groundCmd.DensityMultiplier = 0.15;
+                        seu = 100.0; noise = 2.0; drift = 1.2; density = 0.15;
+                        baseTime = 120700800.0; // Year 2003, DOY 302
                         break;
                     case "fuel_critical":
                         groundCmd.TargetAltitudeKm = 550.0;
                         break;
                     case "cold_eclipse":
-                        engine.SetEnvironment(1.0, 1.2, 1.0, 0.01);
-                        engine.SetTime(86400 * 355); // DOY 355
-                        groundCmd.SeuMultiplier = 1.0;
-                        groundCmd.NoiseMultiplier = 1.2;
-                        groundCmd.DriftMultiplier = 1.0;
-                        groundCmd.DensityMultiplier = 0.01;
+                        seu = 1.0; noise = 1.2; drift = 1.0; density = 0.01;
+                        baseTime = 86400 * 355; // DOY 355
                         break;
+                }
+
+                if (preset != "fuel_critical")
+                {
+                    for (int i = 0; i < NUM_SATS; i++)
+                    {
+                        engines[i].SetEnvironment(seu, noise, drift, density);
+                        engines[i].SetTime(baseTime + timeOffsets[i]);
+                    }
+                    groundCmd.SeuMultiplier = seu;
+                    groundCmd.NoiseMultiplier = noise;
+                    groundCmd.DriftMultiplier = drift;
+                    groundCmd.DensityMultiplier = density;
                 }
             }
 
             if (groundCmd.EnvironmentDirty)
             {
-                engine.SetEnvironment(
-                    groundCmd.SeuMultiplier,
-                    groundCmd.NoiseMultiplier,
-                    groundCmd.DriftMultiplier,
-                    groundCmd.DensityMultiplier);
+                for (int i = 0; i < NUM_SATS; i++)
+                {
+                    engines[i].SetEnvironment(
+                        groundCmd.SeuMultiplier,
+                        groundCmd.NoiseMultiplier,
+                        groundCmd.DriftMultiplier,
+                        groundCmd.DensityMultiplier);
+                }
                 groundCmd.EnvironmentDirty = false;
-                Console.WriteLine($"  [ENV] Applied: SEU={groundCmd.SeuMultiplier}x " +
+                Console.WriteLine($"  [ENV] Applied to all satellites: SEU={groundCmd.SeuMultiplier}x " +
                     $"Noise={groundCmd.NoiseMultiplier}x Drift={groundCmd.DriftMultiplier}x " +
                     $"Density={groundCmd.DensityMultiplier}");
             }
 
-            // d. Step the engine
-            engine.Step(ref action, ref state);
+            bool[] overriddenSats = new bool[NUM_SATS];
+
+            for (int i = 0; i < NUM_SATS; i++)
+            {
+                if (engines[i].IsDone) continue;
+
+                // a. Build normalised observation
+                float[] obs = obsBuilders[i].Build(in states[i]);
+
+                // b. Run ONNX inference (or use manual override)
+                ActionPacket action;
+                bool overridden;
+
+                if (groundCmd.ManualOverride)
+                {
+                    action = groundCmd.ManualAction;
+                    action.Version = 1;
+                    overridden = true;
+                }
+                else
+                {
+                    AgentActions aiActions;
+                    using (var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500)))
+                    {
+                        try
+                        {
+                            var inferTask = Task.Run(() => inference.Infer(obs), cts.Token);
+                            if (await Task.WhenAny(inferTask, Task.Delay(500, cts.Token)) == inferTask)
+                            {
+                                aiActions = await inferTask;
+                            }
+                            else
+                            {
+                                throw new TimeoutException("Inference timed out (exceeded 500ms)");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Inference timeout / error → force SAFE mode
+                            states[i].FdirMode = (byte)FdirMode.Safe;
+                            Console.WriteLine($"  [WATCHDOG] SAT {i} FAILED: {ex.Message} — forcing SAFE mode!");
+                            aiActions = new AgentActions
+                            {
+                                Nav = new NavigationAction(),
+                                DeepSleep = 1,
+                                PayloadOn = 0
+                            };
+                        }
+                    }
+                    action = governors[i].Apply(aiActions, in states[i], out overridden);
+                }
+                overriddenSats[i] = overridden;
+                if (overridden) fdirOverrides[i]++;
+
+                // c. Apply ground command overrides
+                if (injectSeu)
+                {
+                    action.InjectSeu = 1;
+                }
+
+                // c2. Altitude hold correction
+                if (!groundCmd.ManualOverride && Math.Abs(groundCmd.TargetAltitudeKm - 600.0) > 1.0)
+                {
+                    double altError = groundCmd.TargetAltitudeKm - states[i].AltitudeKm;
+                    float correction = (float)Math.Clamp(altError * 0.005, -0.5, 0.5);
+                    action.ThrustZ = Math.Clamp(action.ThrustZ + correction, -1f, 1f);
+                    float throttleBoost = (float)Math.Min(Math.Abs(altError) * 0.002, 0.3);
+                    action.Throttle = Math.Clamp(action.Throttle + throttleBoost, 0f, 1f);
+                }
+
+                // d. Step the engine
+                engines[i].Step(ref action, ref states[i]);
+
+                // e. Apply forced FDIR mode
+                if (groundCmd.ForcedFdirMode.HasValue)
+                    states[i].FdirMode = (byte)groundCmd.ForcedFdirMode.Value;
+
+                // f. Track metrics
+                if (action.PayloadOn == 1) payloadOnSteps[i]++;
+                if (states[i].InEclipse == 1) eclipseSteps[i]++;
+                if (states[i].InSaa == 1) saaSteps[i]++;
+
+                actions[i] = action;
+            }
             step++;
 
-            // e. Apply forced FDIR mode (after step, before broadcast)
-            if (groundCmd.ForcedFdirMode.HasValue)
-                state.FdirMode = (byte)groundCmd.ForcedFdirMode.Value;
-
-            // f. Track metrics
-            if (action.PayloadOn == 1) payloadOnSteps++;
-            if (state.InEclipse == 1) eclipseSteps++;
-            if (state.InSaa == 1) saaSteps++;
-
-            // f. Log + broadcast only on skip boundary (fast-forward)
-            bool isBroadcastStep = (step % config.Skip == 0) || state.IsDone == 1;
+            // g. Log + broadcast only on skip boundary
+            bool isBroadcastStep = (step % config.Skip == 0) || engines.Any(e => e.IsDone);
 
             if (isBroadcastStep)
             {
-                // Log telemetry
-                logger.LogStep(step, in state, in action, overridden,
-                    manualOverride: groundCmd.ManualOverride,
-                    seuMult: groundCmd.SeuMultiplier,
-                    noiseMult: groundCmd.NoiseMultiplier,
-                    driftMult: groundCmd.DriftMultiplier,
-                    densityMult: groundCmd.DensityMultiplier);
+                for (int i = 0; i < NUM_SATS; i++)
+                {
+                    loggers[i].LogStep(step, in states[i], in actions[i], overriddenSats[i],
+                        manualOverride: groundCmd.ManualOverride,
+                        seuMult: groundCmd.SeuMultiplier,
+                        noiseMult: groundCmd.NoiseMultiplier,
+                        driftMult: groundCmd.DriftMultiplier,
+                        densityMult: groundCmd.DensityMultiplier);
 
-                // Broadcast via WebSocket
+                    if (wsServer != null)
+                    {
+                        byte[] packet = TelemetryPacket.Serialise(
+                            (byte)i, (uint)step, in states[i], in actions[i], overriddenSats[i]);
+                        wsServer.EnqueueFrame(packet);
+                    }
+                }
+
                 if (wsServer != null)
                 {
-                    byte[] packet = TelemetryPacket.Serialise(
-                        (uint)step, in state, in action, overridden);
-                    wsServer.EnqueueFrame(packet);
                     await wsServer.FlushAsync();
                 }
             }
 
             // h. Periodic console output
             int consoleInterval = Math.Max(1000, config.Skip * 100);
-            if (step % consoleInterval == 0 || state.IsDone == 1)
+            if (step % consoleInterval == 0 || engines.Any(e => e.IsDone))
             {
-                double simHours = state.SimTimeS / 3600.0;
-                double nadirDeg = state.NadirError * (180.0 / Math.PI);
-                Console.WriteLine(
-                    $"  Step {step,6} | {simHours,6:F1}h | Alt={state.AltitudeKm,6:F1}km " +
-                    $"| SoC={state.BatterySoc * 100,5:F1}% | Fuel={state.FuelFraction * 100,5:F1}% " +
-                    $"| Temp={state.TempBattery,5:F1}C | FDIR={FdirGovernor.ModeLabel(state.FdirMode)} " +
-                    $"| Eclipse={state.InEclipse} | SAA={state.InSaa} | NadirErr={nadirDeg,4:F1}° | Payload={action.PayloadOn}");
+                Console.WriteLine($"[Step {step,6}] Constellation Status:");
+                for (int i = 0; i < NUM_SATS; i++)
+                {
+                    double simHours = states[i].SimTimeS / 3600.0;
+                    double nadirDeg = states[i].NadirError * (180.0 / Math.PI);
+                    string status = states[i].IsDone == 1 ? $"DEAD ({states[i].DoneReasonEnum})" : "ALIVE";
+                    Console.WriteLine($"  SAT {i}: Alt={states[i].AltitudeKm:F1}km | SoC={states[i].BatterySoc * 100:F1}% | Nadir={nadirDeg:F1}° | FDIR={FdirGovernor.ModeLabel(states[i].FdirMode)} | {status}");
+                }
+                Console.WriteLine();
             }
         }
 
-        // ── 7. Episode Summary ───────────────────────────────────
-        logger.Flush();
         Console.WriteLine();
         Console.WriteLine("  ════════════════════════════════════════════════════════");
-        Console.WriteLine("  EPISODE SUMMARY");
+        Console.WriteLine("  CONSTELLATION EPISODE SUMMARY");
         Console.WriteLine("  ════════════════════════════════════════════════════════");
         Console.WriteLine($"  Total steps:      {step}");
-        Console.WriteLine($"  Simulation time:  {state.SimTimeS / 3600.0:F1} hours ({state.SimTimeS / 86400.0:F2} days)");
-        Console.WriteLine($"  Final altitude:   {state.AltitudeKm:F2} km");
-        Console.WriteLine($"  Final SoC:        {state.BatterySoc * 100:F2}%");
-        Console.WriteLine($"  Final FDIR mode:  {FdirGovernor.ModeLabel(state.FdirMode)}");
-        Console.WriteLine($"  Panel efficiency: {state.PanelEfficiency * 100:F2}%");
-        Console.WriteLine($"  Drag coefficient: {state.DragCoeff:F4}");
-        Console.WriteLine($"  Charge cycles:    {state.ChargeCycles}");
-        Console.WriteLine($"  Episode done:     {(state.IsDone == 1 ? "YES" : "NO")}");
-        if (state.IsDone == 1)
-            Console.WriteLine($"  Done reason:      {state.DoneReasonEnum}");
-        Console.WriteLine();
-        Console.WriteLine($"  FDIR overrides:   {fdirOverrides} ({100.0 * fdirOverrides / Math.Max(1, step):F1}%)");
-        Console.WriteLine($"  Payload ON steps: {payloadOnSteps} ({100.0 * payloadOnSteps / Math.Max(1, step):F1}%)");
-        Console.WriteLine($"  Eclipse steps:    {eclipseSteps} ({100.0 * eclipseSteps / Math.Max(1, step):F1}%)");
-        Console.WriteLine($"  SAA steps:        {saaSteps} ({100.0 * saaSteps / Math.Max(1, step):F1}%)");
-        Console.WriteLine($"  Telemetry log:    {logger.FilePath}");
+        for (int i = 0; i < NUM_SATS; i++)
+        {
+            Console.WriteLine($"  SAT {i}:");
+            Console.WriteLine($"    Final altitude:   {states[i].AltitudeKm:F2} km");
+            Console.WriteLine($"    Final SoC:        {states[i].BatterySoc * 100:F2}%");
+            Console.WriteLine($"    Final FDIR mode:  {FdirGovernor.ModeLabel(states[i].FdirMode)}");
+            Console.WriteLine($"    FDIR overrides:   {fdirOverrides[i]} ({100.0 * fdirOverrides[i] / Math.Max(1, step):F1}%)");
+            Console.WriteLine($"    Payload ON steps: {payloadOnSteps[i]} ({100.0 * payloadOnSteps[i] / Math.Max(1, step):F1}%)");
+            Console.WriteLine($"    Eclipse steps:    {eclipseSteps[i]} ({100.0 * eclipseSteps[i] / Math.Max(1, step):F1}%)");
+            Console.WriteLine($"    SAA steps:        {saaSteps[i]} ({100.0 * saaSteps[i] / Math.Max(1, step):F1}%)");
+            Console.WriteLine($"    Telemetry log:    {loggers[i].FilePath}");
+        }
 
         if (impairment != null)
             impairment.PrintSummary();
@@ -309,6 +363,11 @@ public static class Program
 
         // ── 8. Cleanup ───────────────────────────────────────────
         wsServer?.Dispose();
+        for (int i = 0; i < NUM_SATS; i++)
+        {
+            engines[i].Dispose();
+            loggers[i].Dispose();
+        }
         return 0;
     }
 
@@ -358,7 +417,7 @@ public static class Program
         {
             int csState = Marshal.SizeOf<StatePacket>();
             int csAction = Marshal.SizeOf<ActionPacket>();
-            Assert(csState == 222, $"StatePacket size: expected 222, got {csState}");
+            Assert(csState == 230, $"StatePacket size: expected 230, got {csState}");
             Assert(csAction == 20, $"ActionPacket size: expected 20, got {csAction}");
             Pass(1, "ABI struct sizes", $"State={csState}B, Action={csAction}B");
             passed++;

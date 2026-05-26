@@ -25,11 +25,12 @@ public sealed class TelemetryLogger : IDisposable
     /// Create a telemetry logger.
     /// </summary>
     /// <param name="logDir">Directory for log files.</param>
-    public TelemetryLogger(string logDir)
+    /// <param name="satId">Optional Satellite ID to append to the filename.</param>
+    public TelemetryLogger(string logDir, int satId = 0)
     {
         Directory.CreateDirectory(logDir);
         string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        FilePath = Path.Combine(logDir, $"session_{timestamp}.csv");
+        FilePath = Path.Combine(logDir, $"session_{timestamp}_sat{satId}.csv");
         _writer = new StreamWriter(FilePath, append: false);
         WriteHeader();
         Console.WriteLine($"  Telemetry logging to: {FilePath}");

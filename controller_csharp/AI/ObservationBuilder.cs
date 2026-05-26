@@ -2,10 +2,10 @@
  * S-MAS Phase A — AI/ObservationBuilder.cs
  *
  * Exact 1:1 C# port of marl_python/observation.py.
- * Converts a raw StatePacket into a normalised 37-dim float[] vector
+ * Converts a raw StatePacket into a normalised 42-dim float[] vector
  * suitable for ONNX model input.
  *
- * Layout (deterministic, matching Python):
+ * Layout (deterministic, matching Python observation.py):
  *   [0-6]   orbit:   alt, lat, lon, |v|, vx/|v|, vy/|v|, vz/|v|
  *   [7-10]  power:   soc, cap_frac, solar_w, draw_w
  *   [11-15] env:     log_rho, log_flux10, log_flux30, eclipse, saa
@@ -16,24 +16,25 @@
  *   [26-27] fuel:    fuel_fraction, fuel_depleted
  *   [28-31] thermal: temp_bus, temp_battery, temp_payload, heater_on
  *   [32]    target:  target_alt_norm
- *   [33-36] lag:     kp_3h, f107_3h, kp_6h, f107_6h (zeros for now)
- *   Total = 37
+ *   [33-37] adcs:    sun_angle, nadir_error, wheel_x, wheel_y, wheel_z
+ *   [38-41] lag:     kp_3h, f107_3h, kp_6h, f107_6h (zeros for now)
+ *   Total = 42
  */
 using SmasController.Interop;
 
 namespace SmasController.AI;
 
 /// <summary>
-/// Builds a normalised 37-dim observation vector from a StatePacket.
+/// Builds a normalised 42-dim observation vector from a StatePacket.
 /// All normalisation logic exactly mirrors observation.py.
 /// </summary>
 public sealed class ObservationBuilder
 {
     public const int ObsDim = 42;
 
-    // Goal-conditioned altitude range (must match config.py)
-    private const double TargetAltMin = 550.0;
-    private const double TargetAltMax = 750.0;
+    // Goal-conditioned altitude range (MUST match config.py ObsConfig)
+    private const double TargetAltMin = 580.6;
+    private const double TargetAltMax = 610.6;
 
     /// <summary>
     /// Current target altitude (set per episode or from Dashboard).

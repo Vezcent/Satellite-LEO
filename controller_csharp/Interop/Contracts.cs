@@ -112,6 +112,10 @@ public struct StatePacket
     public float  WheelMomentumY;      // Nms
     public float  WheelMomentumZ;      // Nms
 
+    // ── Comms & Data (Phase B Step 7) ──
+    public float  DataBufferMb;
+    public float  SnrDb;
+
     /// <summary>Typed accessor for the FDIR mode.</summary>
     public readonly FdirMode FdirModeEnum => (FdirMode)FdirMode;
 

@@ -39,22 +39,18 @@ double ThermalModel::radiative_loss(double temp_k, double emissivity, double are
             t_space * t_space * t_space * t_space);
 }
 
-void ThermalModel::update(bool eclipse, double solar_power_w,
+void ThermalModel::update(double penumbra_factor, double solar_power_w,
                            double power_draw_w, double dt) {
     // ── Bus node ──────────────────────────────────────────────────
     double T_bus_k = to_kelvin(state_.temp_bus);
 
     // Solar input to bus (absorbed by structure, not solar panels)
-    double Q_solar_bus = 0.0;
-    if (!eclipse) {
-        Q_solar_bus = constants::SOLAR_FLUX_W_M2 * constants::SAT_ABSORPTIVITY *
-                      constants::SAT_AREA_M2;
-    }
+    double Q_solar_bus = constants::SOLAR_FLUX_W_M2 * constants::SAT_ABSORPTIVITY *
+                         constants::SAT_AREA_M2 * penumbra_factor;
 
     // Earth albedo (always present, reduced in eclipse)
     double Q_albedo = constants::SOLAR_FLUX_W_M2 * constants::EARTH_ALBEDO *
-                      VIEW_FACTOR * constants::SAT_AREA_M2;
-    if (eclipse) Q_albedo *= 0.0; // no albedo in eclipse
+                      VIEW_FACTOR * constants::SAT_AREA_M2 * penumbra_factor;
 
     // Internal dissipation (electronics waste heat)
     double Q_internal = power_draw_w * 0.6; // ~60% becomes heat

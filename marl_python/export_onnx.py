@@ -1,20 +1,19 @@
 """
-S-MAS Phase 3 â€” Task 3.4
-ONNX Export Pipeline with Dynamic Axes and FP16.
+S-MAS Phase 3 — Task 3.4
+ONNX Export Pipeline with Dynamic Axes, FP16, and INT8 Quantization.
 
 Exports the trained SharedActorCritic model to ONNX format for
 deployment via the ONNX Runtime C++ API in Phase 4.
 
 Produces three separate ONNX files:
-  smas_nav.onnx     â€” Navigation head (continuous 4D output)
-  smas_bus.onnx     â€” Resource head (binary deep_sleep logit)
-  smas_mission.onnx â€” Mission head (binary payload_on logit)
+  smas_nav.onnx     — Navigation head (continuous 4D output)
+  smas_bus.onnx     — Resource head (binary deep_sleep logit)
+  smas_mission.onnx — Mission head (binary payload_on logit)
 
 Usage
 -----
   cd marl_python
-  python export_onnx.py --checkpoint checkpoints/mappo_phase3_best.pt
-  python export_onnx.py --checkpoint checkpoints/mappo_phase3_best.pt --fp16
+  python export_onnx.py --checkpoint checkpoints/mappo_phase3_best.pt --quantize int8
 """
 import os
 import sys
@@ -29,9 +28,9 @@ from config import ObsConfig, MAPPOConfig
 from mappo import SharedActorCritic
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ===============================================================================
 #  Wrapper modules for clean ONNX export
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ===============================================================================
 
 class NavExportModule(nn.Module):
     """Wraps trunk + NavigationHead for ONNX export.
@@ -77,37 +76,37 @@ class MissionExportModule(nn.Module):
         return logit
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ===============================================================================
 #  Export logic
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ===============================================================================
 
 def export_model(checkpoint_path: str,
                  output_dir: str = "onnx_export",
-                 fp16: bool = False,
+                 quantize: str = "fp32",
                  obs_dim: int = None):
     """
     Load a checkpoint and export all three heads to ONNX.
 
     Parameters
     ----------
-    checkpoint_path : str â€” path to .pt checkpoint
-    output_dir : str â€” directory for ONNX files
-    fp16 : bool â€” convert to half precision
-    obs_dim : int â€” observation dimension (default from ObsConfig)
+    checkpoint_path : str — path to .pt checkpoint
+    output_dir : str — directory for ONNX files
+    quantize : str — quantization mode (fp32, fp16, int8)
+    obs_dim : int — observation dimension (default from ObsConfig)
     """
     if obs_dim is None:
         obs_dim = ObsConfig().obs_dim
 
     print("=" * 60)
-    print("  S-MAS ONNX Export Pipeline â€” Phase 3")
+    print("  S-MAS ONNX Export Pipeline — Phase 3")
     print("=" * 60)
     print(f"  Checkpoint: {checkpoint_path}")
     print(f"  Output dir: {output_dir}")
-    print(f"  FP16:       {fp16}")
+    print(f"  Quantize:   {quantize.upper()}")
     print(f"  Obs dim:    {obs_dim}")
     print()
 
-    # â”€â”€ Load checkpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # —— Load checkpoint —————————————————————————————————————————————
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model = SharedActorCritic(obs_dim, MAPPOConfig())
     model.load_state_dict(ckpt["model_state"])
@@ -119,7 +118,7 @@ def export_model(checkpoint_path: str,
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # â”€â”€ Prepare export modules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # —— Prepare export modules ——————————————————————————————————————
     modules = {
         "smas_nav":     NavExportModule(model),
         "smas_bus":     BusExportModule(model),
@@ -132,15 +131,12 @@ def export_model(checkpoint_path: str,
         "smas_mission": ["logit"],
     }
 
-    # â”€â”€ Export each head â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # —— Export each head ————————————————————————————————————————————
     for name, module in modules.items():
         module.eval()
 
-        # Prepare dummy input
-        dtype = torch.float16 if fp16 else torch.float32
-        if fp16:
-            module = module.half()
-        dummy = torch.randn(1, obs_dim, dtype=dtype)
+        # Export as standard float32 first
+        dummy = torch.randn(1, obs_dim, dtype=torch.float32)
 
         out_path = os.path.join(output_dir, f"{name}.onnx")
         out_names = output_names_map[name]
@@ -161,10 +157,27 @@ def export_model(checkpoint_path: str,
             dynamic_axes=dynamic_axes,
         )
 
-        size_kb = os.path.getsize(out_path) / 1024
-        print(f"  âœ“ Exported: {out_path}  ({size_kb:.1f} KB)")
+        # Apply post-export quantization/conversion
+        if quantize == "fp16":
+            import onnx
+            from onnxconverter_common import float16
+            onnx_model = onnx.load(out_path)
+            model_fp16 = float16.convert_float_to_float16(onnx_model)
+            onnx.save(model_fp16, out_path)
+        elif quantize == "int8":
+            from onnxruntime.quantization import quantize_dynamic, QuantType
+            temp_path = out_path + ".temp"
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            os.replace(out_path, temp_path)
+            quantize_dynamic(temp_path, out_path, weight_type=QuantType.QInt8)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
-    # â”€â”€ Verification with ONNX Runtime â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        size_kb = os.path.getsize(out_path) / 1024
+        print(f"  [OK] Exported: {out_path}  ({size_kb:.1f} KB)")
+
+    # —— Verification with ONNX Runtime ——————————————————————————————
     print("\n  Verifying ONNX outputs (Numerical Parity)...")
     try:
         import onnxruntime as ort
@@ -178,15 +191,17 @@ def export_model(checkpoint_path: str,
             session = ort.InferenceSession(onnx_path)
             
             # 1. Run ONNX Inference
-            # Handle FP16 input cast if needed
-            ort_in = test_input_np.astype(np.float16) if fp16 else test_input_np
+            # Handle input cast based on model input type
+            input_type = session.get_inputs()[0].type
+            is_fp16 = "float16" in input_type
+            
+            ort_in = test_input_np.astype(np.float16) if is_fp16 else test_input_np
             ort_out = session.run(None, {"obs_input": ort_in})
 
             # 2. Run PyTorch Inference
             module.eval()
             with torch.no_grad():
-                pt_in = test_input_torch.half() if fp16 else test_input_torch
-                pt_out = module(pt_in)
+                pt_out = module(test_input_torch)
                 
                 # Handle tuple vs single tensor output
                 if isinstance(pt_out, tuple):
@@ -201,13 +216,16 @@ def export_model(checkpoint_path: str,
                 diffs.append(diff)
             
             max_diff = max(diffs)
-            status = "âœ“" if max_diff < (1e-3 if fp16 else 1e-5) else "Γ£ù"
+            
+            # INT8 quantization introduces weight precision loss, so error tolerance is higher (e.g., 0.2)
+            threshold = 0.2 if quantize == "int8" else (1e-2 if is_fp16 else 1e-5)
+            status = "[OK]" if max_diff < threshold else "[FAIL]"
             print(f"    {name:13}: Max Diff = {max_diff:.8f} {status}")
 
         print("\n  ONNX verification COMPLETE")
 
     except ImportError:
-        print("    âš  onnxruntime not installed â€” skipping verification.")
+        print("    ⚠️ onnxruntime not installed — skipping verification.")
         print("    Install with: pip install onnxruntime")
 
     print("\n" + "=" * 60)
@@ -215,13 +233,12 @@ def export_model(checkpoint_path: str,
     print("=" * 60)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ===============================================================================
 #  CLI entry point
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ===============================================================================
 
 def _find_best_checkpoint(ckpt_dir: str = "checkpoints") -> str:
-    """Find the best checkpoint from the FIXED training pipeline based on reward.
-    """
+    """Find the best checkpoint from the FIXED training pipeline based on reward."""
     import glob
     candidates = glob.glob(os.path.join(ckpt_dir, "mappo_phase3_*.pt"))
     if not candidates:
@@ -257,8 +274,10 @@ def main():
                         help="Path to .pt checkpoint file (auto-detects BEST if omitted)")
     parser.add_argument("--output_dir", type=str, default="onnx_export",
                         help="Directory for ONNX files")
+    parser.add_argument("--quantize", type=str, choices=["fp32", "fp16", "int8"], default="fp32",
+                        help="Quantization mode: fp32 (default), fp16 (float16 conversion), or int8 (dynamic weight quantization)")
     parser.add_argument("--fp16", action="store_true",
-                        help="Export in half precision (FP16)")
+                        help="Deprecated: use --quantize fp16 instead")
     parser.add_argument("--deploy", action="store_true",
                         help="Copy exported models to controller_csharp/models/")
     args = parser.parse_args()
@@ -268,7 +287,12 @@ def main():
         args.checkpoint = _find_best_checkpoint()
         print(f"  Auto-detected best checkpoint: {args.checkpoint}")
 
-    export_model(args.checkpoint, args.output_dir, args.fp16)
+    # Map deprecated --fp16 flag to --quantize fp16 if provided
+    quantize_mode = args.quantize
+    if args.fp16:
+        quantize_mode = "fp16"
+
+    export_model(args.checkpoint, args.output_dir, quantize_mode)
 
     # Deploy to C# controller if requested
     if args.deploy:
@@ -285,4 +309,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

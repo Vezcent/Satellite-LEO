@@ -14,12 +14,12 @@ public:
     void reset();
 
     // ── Power update for one time step (dt = 5 s) ─────────────────
-    //   in_eclipse     : true if in Earth's shadow
+    //   penumbra_factor: [0, 1] solar illumination fraction
     //   panel_eff      : current solar panel efficiency [0,1]
     //   deep_sleep     : Resource Agent flag
     //   payload_on     : Mission Agent flag
     //   dt             : time step (seconds)
-    void update(bool in_eclipse, double panel_eff,
+    void update(double penumbra_factor, double panel_eff,
                 bool deep_sleep, bool payload_on, double cos_sun_angle, double dt);
 
     // ── Power Getters ─────────────────────────────────────────────

@@ -23,11 +23,11 @@ public:
     void reset();
 
     // ── Main update ───────────────────────────────────────────────
-    //   eclipse       : true if in Earth shadow
+    //   penumbra_factor: [0, 1] solar illumination fraction
     //   solar_power_w : current solar panel output (W)
     //   power_draw_w  : current bus power draw (W)
     //   dt            : time step (s)
-    void update(bool eclipse, double solar_power_w,
+    void update(double penumbra_factor, double solar_power_w,
                 double power_draw_w, double dt);
 
     // ── Getters ───────────────────────────────────────────────────

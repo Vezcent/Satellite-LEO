@@ -20,7 +20,7 @@ class EnvConfig:
     dll_path: str = str(PROJECT_ROOT / "backend_cpp" / "build" / "smas_engine.dll")
     seed: int = 42
     dt: float = 5.0                     # immutable physics step (seconds)
-    max_steps_per_episode: int = 120_960  # ~1 week (7 days × 86400 / 5)
+    max_steps_per_episode: int = 362_880  # ~3 weeks (21 days × 86400 / 5) - increased x3 362,880
     num_envs: int = 16                  # Increased to 16 for strong CPUs
     density_multiplier: float = 0.01    # calibrated for multi-year realism (PROBA-1: 24yr at 600km)
     # ── Progressive Degradation (within each episode) ──
@@ -52,8 +52,8 @@ class ObsConfig:
     # look-ahead / look-back lag features
     lag_features: int = 4              # kp_3h, f107_3h, kp_6h, f107_6h
     # Goal-conditioned altitude range (Phase A)
-    target_alt_min: float = 550.0      # km
-    target_alt_max: float = 750.0      # km
+    target_alt_min: float = 580.6     # km
+    target_alt_max: float = 610.6      # km
 
     @property
     def obs_dim(self) -> int:
@@ -82,11 +82,11 @@ class RewardConfig:
     """Explicit reward weights (from pipeline doc §3.2.2)."""
     w_alive: float = 5.0               # reduced to prevent masking penalties
     w_fuel:  float = 10.0              # thrust penalty (scales with 1/remaining_fuel)
-    w_dod:   float = 30.0              # penalty for Depth of Discharge
+    w_dod:   float = 50.0              # penalty for Depth of Discharge - increased to 45
     w_fdir:  float = 200.0             # penalty when FDIR intervenes
     w_fatal: float = 50000.0           # HUGE penalty on terminal failure
     w_alt: float = 0.3              # was 2.0 — quá lớn, overwhelm learning
-    alt_deadband_km: float = 25.0   # was 25.0 — cho agent thời gian học
+    alt_deadband_km: float = 35.0   # was 25.0 — cho agent thời gian học - set to ±35 km
     # Phase A: fuel conservation
     w_fuel_critical: float = 500.0     # penalty when fuel < 10%
     w_coast_bonus: float = 2.0         # bonus for coasting (throttle=0, fuel>0)

@@ -15,7 +15,7 @@ namespace smas {
 // ── State Packet ──────────────────────────────────────────────────
 // Direction: C++ → C# / Python
 struct StatePacket {
-    uint8_t version = 3;
+    uint8_t version = 4;
 
     // ── Time ──
     double  sim_time_s;           // total elapsed seconds
@@ -79,6 +79,10 @@ struct StatePacket {
     float   wheel_momentum_x;     // Nms
     float   wheel_momentum_y;     // Nms
     float   wheel_momentum_z;     // Nms
+    
+    // ── Comms & Data (Phase B Step 7) ──
+    float   data_buffer_mb;       // [0, 256.0] MB (onboard flash storage)
+    float   snr_db;               // Strongest ground station link SNR (dB), or -999.0 when LOS
 };
 
 // ── Action Packet ─────────────────────────────────────────────────

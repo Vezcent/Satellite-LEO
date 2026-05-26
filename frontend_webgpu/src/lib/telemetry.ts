@@ -10,6 +10,7 @@ export const FdirMode = {
 export type FdirMode = typeof FdirMode[keyof typeof FdirMode];
 
 export interface TelemetryData {
+  satId: number;
   seq: number;
   simTimeS: number;
   altitudeKm: number;
@@ -54,6 +55,10 @@ export interface TelemetryData {
   wheelMomentumX: number;
   wheelMomentumY: number;
   wheelMomentumZ: number;
+
+  // Comms & Data (Phase B Step 7)
+  dataBufferMb: number;
+  snrDb: number;
 }
 
 // ── Ground Command Interface (Frontend → C# Controller) ──────────
@@ -79,7 +84,7 @@ const RECONNECT_INTERVAL_MS = 2000;  // Retry every 2 seconds
 const MAX_RECONNECT_ATTEMPTS = 999;  // Keep trying indefinitely
 
 export function useTelemetry(url: string = 'ws://localhost:8765') {
-  const [data, setData] = useState<TelemetryData | null>(null);
+  const [satellites, setSatellites] = useState<(TelemetryData | null)[]>([null, null, null, null]);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -128,17 +133,18 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
       const buffer = event.data;
       const view = new DataView(buffer);
       
-      // Packet format: [Version(1) | Seq(4) | PayloadLen(4) | Payload(N) | CRC32(4)]
-      if (buffer.byteLength < 9) return;
+      // Packet format: [Version(1) | SatID(1) | Seq(4) | PayloadLen(4) | Payload(N) | CRC32(4)]
+      if (buffer.byteLength < 10) return;
       
       const version = view.getUint8(0);
       if (version !== 1) return; // Unsupported version
       
-      const seq = view.getUint32(1, true); // Little endian
-      // const payloadLen = view.getUint32(5, true);
+      const satId = view.getUint8(1);
+      const seq = view.getUint32(2, true); // Little endian
+      // const payloadLen = view.getUint32(6, true);
       
-      // Parse Payload (offset 9)
-      let offset = 9;
+      // Parse Payload (offset 10)
+      let offset = 10;
       
       const simTimeS = view.getFloat64(offset, true); offset += 8;
       const altitudeKm = view.getFloat64(offset, true); offset += 8;
@@ -187,15 +193,28 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
       const wheelMomentumY = view.getFloat32(offset, true); offset += 4;
       const wheelMomentumZ = view.getFloat32(offset, true); offset += 4;
 
-      setData({
-        seq, simTimeS, altitudeKm, latitudeDeg, longitudeDeg,
+      // Comms & Data (Phase B Step 7)
+      const dataBufferMb = view.getFloat32(offset, true); offset += 4;
+      const snrDb = view.getFloat32(offset, true); offset += 4;
+
+      const parsedData: TelemetryData = {
+        satId, seq, simTimeS, altitudeKm, latitudeDeg, longitudeDeg,
         batterySoc, solarPowerW, powerDrawW, inEclipse, inSaa,
         fdirMode, seuActive, gsVisible, panelEfficiency, dragCoeff,
         atmDensity, saaFlux10, saaFlux30,
         isDone, doneReason, thrustX, thrustY, thrustZ, throttle,
         deepSleep, payloadOn, fdirOverridden,
         fuelFraction, fuelDepleted, tempBus, tempBattery, tempPayload, heaterOn,
-        sunAngle, nadirError, wheelMomentumX, wheelMomentumY, wheelMomentumZ
+        sunAngle, nadirError, wheelMomentumX, wheelMomentumY, wheelMomentumZ,
+        dataBufferMb, snrDb
+      };
+
+      setSatellites(prev => {
+        const next = [...prev];
+        if (satId >= 0 && satId < 4) {
+          next[satId] = parsedData;
+        }
+        return next;
       });
     };
   }, [url]);
@@ -224,5 +243,5 @@ export function useTelemetry(url: string = 'ws://localhost:8765') {
     }
   }, []);
 
-  return { data, connected, sendCommand };
+  return { satellites, connected, sendCommand };
 }

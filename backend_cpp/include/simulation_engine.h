@@ -88,6 +88,7 @@ private:
     double            time_since_contact_;
     FDIRMode          fdir_mode_;
     double            target_altitude_km_ = 600.0;
+    double            data_buffer_mb_     = 0.0;
 
     // ── Internal helpers ──
     void update_time();

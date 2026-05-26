@@ -91,8 +91,9 @@ public sealed class ReplayEngine
         using var ms = new MemoryStream(128);
         using var bw = new BinaryWriter(ms);
 
-        // Write version + seq + placeholder length
+        // Write version + satId + seq + placeholder length
         bw.Write(TelemetryPacket.PacketVersion);
+        bw.Write((byte)0); // Default satId = 0 for offline replay logs
         bw.Write(seq);
 
         // Payload start

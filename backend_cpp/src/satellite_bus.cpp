@@ -24,14 +24,10 @@ void SatelliteBus::reset() {
     thermal_factor_ = 1.0;
 }
 
-void SatelliteBus::update(bool in_eclipse, double panel_eff,
+void SatelliteBus::update(double penumbra_factor, double panel_eff,
                           bool deep_sleep, bool payload_on, double cos_sun_angle, double dt) {
     // ── Solar power generation ────────────────────────────────────
-    if (in_eclipse) {
-        solar_w_ = 0.0;
-    } else {
-        solar_w_ = constants::SAT_SOLAR_POWER_W * panel_eff * cos_sun_angle;
-    }
+    solar_w_ = constants::SAT_SOLAR_POWER_W * panel_eff * std::max(0.0, cos_sun_angle) * penumbra_factor;
 
     // ── Power consumption ─────────────────────────────────────────
     if (deep_sleep) {

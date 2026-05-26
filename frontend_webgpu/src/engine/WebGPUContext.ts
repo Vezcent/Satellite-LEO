@@ -181,18 +181,29 @@ export class WebGPUContext implements IRenderContext {
 
   private earthUniformBuffer!: GPUBuffer;
   private earthWireUniformBuffer!: GPUBuffer;
-  private satUniformBuffer!: GPUBuffer;
+  private satUniformBuffers: GPUBuffer[] = [];
+  private satBindGroups: GPUBindGroup[] = [];
   private sunUniformBuffer!: GPUBuffer;
   
   private earthBindGroup!: GPUBindGroup;
   private earthWireBindGroup!: GPUBindGroup;
-  private satBindGroup!: GPUBindGroup;
   private sunBindGroup!: GPUBindGroup;
   private galaxyBindGroup!: GPUBindGroup;
   private galaxyUniformBuffer!: GPUBuffer;
 
-  private satPosition = vec3.fromValues(0, 0, 0);
-  private satColor = vec3.fromValues(0.2, 0.5, 1.0);
+  private satPositions: vec3[] = [
+    vec3.fromValues(0, 0, 0),
+    vec3.fromValues(0, 0, 0),
+    vec3.fromValues(0, 0, 0),
+    vec3.fromValues(0, 0, 0)
+  ];
+  private satColors: vec3[] = [
+    vec3.fromValues(0.23, 0.51, 0.96), // Sat 0: Blue
+    vec3.fromValues(0.13, 0.77, 0.37), // Sat 1: Green
+    vec3.fromValues(0.96, 0.62, 0.04), // Sat 2: Amber
+    vec3.fromValues(0.66, 0.33, 0.97)  // Sat 3: Purple
+  ];
+  private activeSats: boolean[] = [false, false, false, false];
   private currentAtmDensity = 0;
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
@@ -287,7 +298,6 @@ export class WebGPUContext implements IRenderContext {
 
     this.earthUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.earthWireUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.satUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.sunUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     this.heatmapSampler = this.device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
@@ -295,8 +305,14 @@ export class WebGPUContext implements IRenderContext {
 
     this.earthBindGroup = this.createBindGroup(this.earthUniformBuffer, this.solidPipeline);
     this.earthWireBindGroup = this.createBindGroup(this.earthWireUniformBuffer, this.wirePipeline);
-    this.satBindGroup = this.createBindGroup(this.satUniformBuffer, this.solidPipeline);
     this.sunBindGroup = this.createBindGroup(this.sunUniformBuffer, this.sunPipeline);
+
+    for (let i = 0; i < 4; i++) {
+      const buf = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const bg = this.createBindGroup(buf, this.solidPipeline);
+      this.satUniformBuffers.push(buf);
+      this.satBindGroups.push(bg);
+    }
 
     this.galaxyUniformBuffer = this.device.createBuffer({ size: 240, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.galaxyBindGroup = this.createBindGroup(this.galaxyUniformBuffer, this.solidPipeline);
@@ -373,6 +389,11 @@ export class WebGPUContext implements IRenderContext {
   }
 
   updateTelemetry(data: TelemetryData): void {
+    const satId = data.satId;
+    if (satId < 0 || satId >= 4) return;
+
+    this.activeSats[satId] = true;
+
     const latRad = data.latitudeDeg * Math.PI / 180;
     const lonRad = data.longitudeDeg * Math.PI / 180;
     const r = 6371 + data.altitudeKm;
@@ -381,14 +402,27 @@ export class WebGPUContext implements IRenderContext {
     const y = r * Math.cos(latRad) * Math.sin(lonRad);
     const z = r * Math.sin(latRad);
 
-    this.satPosition[0] = x;
-    this.satPosition[1] = z;
-    this.satPosition[2] = -y;
+    this.satPositions[satId][0] = x;
+    this.satPositions[satId][1] = z;
+    this.satPositions[satId][2] = -y;
 
-    if (data.fdirMode === 2) { vec3.set(this.satColor, 1.0, 0.2, 0.2); }
-    else if (data.fdirMode === 1) { vec3.set(this.satColor, 1.0, 0.7, 0.1); }
-    else if (data.payloadOn) { vec3.set(this.satColor, 0.1, 1.0, 0.4); }
-    else { vec3.set(this.satColor, 0.2, 0.5, 1.0); }
+    if (data.isDone) {
+      vec3.set(this.satColors[satId], 0.4, 0.4, 0.4);
+    } else if (data.fdirMode === 2) {
+      vec3.set(this.satColors[satId], 1.0, 0.2, 0.2);
+    } else if (data.fdirMode === 1) {
+      vec3.set(this.satColors[satId], 1.0, 0.7, 0.1);
+    } else if (data.payloadOn) {
+      vec3.set(this.satColors[satId], 0.1, 1.0, 0.4);
+    } else {
+      const defaultColors = [
+        vec3.fromValues(0.23, 0.51, 0.96), // Sat 0: Blue
+        vec3.fromValues(0.13, 0.77, 0.37), // Sat 1: Green
+        vec3.fromValues(0.96, 0.62, 0.04), // Sat 2: Amber
+        vec3.fromValues(0.66, 0.33, 0.97)  // Sat 3: Purple
+      ];
+      vec3.copy(this.satColors[satId], defaultColors[satId]);
+    }
 
     this.currentAtmDensity = data.atmDensity;
   }
@@ -443,9 +477,12 @@ export class WebGPUContext implements IRenderContext {
     mat4.scale(wireModelView, wireModelView, [1.002, 1.002, 1.002]);
     updateUniform(this.earthWireUniformBuffer, wireModelView, vec3.fromValues(0.15, 0.35, 0.6), 0.5);
 
-    const satModelView = mat4.clone(this.viewMatrix);
-    mat4.translate(satModelView, satModelView, this.satPosition);
-    updateUniform(this.satUniformBuffer, satModelView, this.satColor, 0.0);
+    for (let i = 0; i < 4; i++) {
+      if (!this.activeSats[i]) continue;
+      const satModelView = mat4.clone(this.viewMatrix);
+      mat4.translate(satModelView, satModelView, this.satPositions[i]);
+      updateUniform(this.satUniformBuffers[i], satModelView, this.satColors[i], 0.0);
+    }
 
     const galaxyView = mat4.clone(this.viewMatrix);
     galaxyView[12] = 0; galaxyView[13] = 0; galaxyView[14] = 0;
@@ -501,12 +538,15 @@ export class WebGPUContext implements IRenderContext {
     renderPass.drawIndexed(this.numEarthIndices);
 
     renderPass.setPipeline(this.solidPipeline);
-    renderPass.setBindGroup(0, this.satBindGroup);
     renderPass.setVertexBuffer(0, this.satVBO);
     renderPass.setVertexBuffer(1, this.satVBN);
     renderPass.setVertexBuffer(2, this.satVBU);
     renderPass.setIndexBuffer(this.satEBO, 'uint16');
-    renderPass.drawIndexed(this.numSatIndices);
+    for (let i = 0; i < 4; i++) {
+      if (!this.activeSats[i]) continue;
+      renderPass.setBindGroup(0, this.satBindGroups[i]);
+      renderPass.drawIndexed(this.numSatIndices);
+    }
 
     renderPass.setPipeline(this.sunPipeline);
     renderPass.setBindGroup(0, this.sunBindGroup);

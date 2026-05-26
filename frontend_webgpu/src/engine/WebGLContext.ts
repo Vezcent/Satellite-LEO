@@ -160,8 +160,19 @@ export class WebGLContext implements IRenderContext {
 
   private projectionMatrix = mat4.create();
   private viewMatrix = mat4.create();
-  private satPosition = vec3.fromValues(0, 0, 0);
-  private satColor = vec3.fromValues(0.2, 0.5, 1.0);
+  private satPositions: vec3[] = [
+    vec3.fromValues(0, 0, 0),
+    vec3.fromValues(0, 0, 0),
+    vec3.fromValues(0, 0, 0),
+    vec3.fromValues(0, 0, 0)
+  ];
+  private satColors: vec3[] = [
+    vec3.fromValues(0.23, 0.51, 0.96), // Sat 0: Blue
+    vec3.fromValues(0.13, 0.77, 0.37), // Sat 1: Green
+    vec3.fromValues(0.96, 0.62, 0.04), // Sat 2: Amber
+    vec3.fromValues(0.66, 0.33, 0.97)  // Sat 3: Purple
+  ];
+  private activeSats: boolean[] = [false, false, false, false];
   private currentAtmDensity = 0;
 
   // Uniform locations
@@ -178,12 +189,17 @@ export class WebGLContext implements IRenderContext {
   private heatmapTex!: WebGLTexture;
   private currentEarthRotation = 0;
 
-  // ── Telemetry Trail (orbital path) ──
-  private trailBuffer: Float32Array = new Float32Array(200 * 3); // 200 positions x (x,y,z)
-  private trailCount = 0;
-  private trailHead = 0;
-  private trailVBO!: WebGLBuffer;
-  private trailVAO!: WebGLVertexArrayObject;
+  // ── Telemetry Trails (orbital paths) ──
+  private trailBuffers: Float32Array[] = [
+    new Float32Array(200 * 3),
+    new Float32Array(200 * 3),
+    new Float32Array(200 * 3),
+    new Float32Array(200 * 3)
+  ];
+  private trailCounts = [0, 0, 0, 0];
+  private trailHeads = [0, 0, 0, 0];
+  private trailVBOs: WebGLBuffer[] = [];
+  private trailVAOs: WebGLVertexArrayObject[] = [];
 
   // ── Target Orbit Ring ──
   private targetOrbitVAO!: WebGLVertexArrayObject;
@@ -234,15 +250,20 @@ export class WebGLContext implements IRenderContext {
     // I'll just draw the sun using the Earth VAO or Sat VAO for now, 
     // but better to have a dedicated one. I'll stick to a simple approach.
 
-    // ── Trail VBO/VAO (dynamic line strip) ──
-    this.trailVBO = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.trailVBO);
-    gl.bufferData(gl.ARRAY_BUFFER, this.trailBuffer, gl.DYNAMIC_DRAW);
-    this.trailVAO = gl.createVertexArray()!;
-    gl.bindVertexArray(this.trailVAO);
-    gl.enableVertexAttribArray(0); // aVertexPosition
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-    gl.bindVertexArray(null);
+    // ── Trail VBOs/VAOs (dynamic line strip) ──
+    for (let i = 0; i < 4; i++) {
+      const vbo = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, this.trailBuffers[i], gl.DYNAMIC_DRAW);
+      const vao = gl.createVertexArray()!;
+      gl.bindVertexArray(vao);
+      gl.enableVertexAttribArray(0); // aVertexPosition
+      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+      gl.bindVertexArray(null);
+      
+      this.trailVBOs.push(vbo);
+      this.trailVAOs.push(vao);
+    }
 
     // ── Target Orbit Ring VBO/VAO ──
     this.buildTargetOrbit(gl);
@@ -365,6 +386,11 @@ export class WebGLContext implements IRenderContext {
   }
 
   updateTelemetry(data: TelemetryData): void {
+    const satId = data.satId;
+    if (satId < 0 || satId >= 4) return;
+
+    this.activeSats[satId] = true;
+
     const latRad = data.latitudeDeg * Math.PI / 180;
     const lonRad = data.longitudeDeg * Math.PI / 180;
     const r = 6371 + data.altitudeKm;
@@ -373,29 +399,42 @@ export class WebGLContext implements IRenderContext {
     const y = r * Math.cos(latRad) * Math.sin(lonRad);
     const z = r * Math.sin(latRad);
 
-    this.satPosition[0] = x;
-    this.satPosition[1] = z;
-    this.satPosition[2] = -y;
+    this.satPositions[satId][0] = x;
+    this.satPositions[satId][1] = z;
+    this.satPositions[satId][2] = -y;
 
-    if (data.fdirMode === 2) { vec3.set(this.satColor, 1.0, 0.2, 0.2); }
-    else if (data.fdirMode === 1) { vec3.set(this.satColor, 1.0, 0.7, 0.1); }
-    else if (data.payloadOn) { vec3.set(this.satColor, 0.1, 1.0, 0.4); }
-    else { vec3.set(this.satColor, 0.2, 0.5, 1.0); }
+    if (data.isDone) {
+      vec3.set(this.satColors[satId], 0.4, 0.4, 0.4);
+    } else if (data.fdirMode === 2) {
+      vec3.set(this.satColors[satId], 1.0, 0.2, 0.2);
+    } else if (data.fdirMode === 1) {
+      vec3.set(this.satColors[satId], 1.0, 0.7, 0.1);
+    } else if (data.payloadOn) {
+      vec3.set(this.satColors[satId], 0.1, 1.0, 0.4);
+    } else {
+      const defaultColors = [
+        vec3.fromValues(0.23, 0.51, 0.96), // Sat 0: Blue
+        vec3.fromValues(0.13, 0.77, 0.37), // Sat 1: Green
+        vec3.fromValues(0.96, 0.62, 0.04), // Sat 2: Amber
+        vec3.fromValues(0.66, 0.33, 0.97)  // Sat 3: Purple
+      ];
+      vec3.copy(this.satColors[satId], defaultColors[satId]);
+    }
 
     this.currentAtmDensity = data.atmDensity;
 
     // Update trail ring buffer
-    const idx = this.trailHead * 3;
-    this.trailBuffer[idx] = this.satPosition[0];
-    this.trailBuffer[idx + 1] = this.satPosition[1];
-    this.trailBuffer[idx + 2] = this.satPosition[2];
-    this.trailHead = (this.trailHead + 1) % 200;
-    if (this.trailCount < 200) this.trailCount++;
+    const idx = this.trailHeads[satId] * 3;
+    this.trailBuffers[satId][idx] = this.satPositions[satId][0];
+    this.trailBuffers[satId][idx + 1] = this.satPositions[satId][1];
+    this.trailBuffers[satId][idx + 2] = this.satPositions[satId][2];
+    this.trailHeads[satId] = (this.trailHeads[satId] + 1) % 200;
+    if (this.trailCounts[satId] < 200) this.trailCounts[satId]++;
 
     // Upload trail data
     const gl = this.gl;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.trailVBO);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.trailBuffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.trailVBOs[satId]);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.trailBuffers[satId]);
   }
 
   render(time: number): void {
@@ -469,16 +508,19 @@ export class WebGLContext implements IRenderContext {
     gl.disable(gl.CULL_FACE);
     gl.drawElements(gl.LINES, this.numEarthIndices, gl.UNSIGNED_SHORT, 0);
 
-    // 2. Sat
-    const satModelView = mat4.clone(this.viewMatrix);
-    mat4.translate(satModelView, satModelView, this.satPosition);
-    gl.uniformMatrix4fv(this.uModelView, false, satModelView);
-    gl.uniform1f(this.uIsEarth, 0.0);
-    gl.uniform3fv(this.uColor, this.satColor);
-
+    // 2. Satellites
     gl.bindVertexArray(this.vaoSat);
     gl.enable(gl.CULL_FACE);
-    gl.drawElements(gl.TRIANGLES, this.numSatIndices, gl.UNSIGNED_SHORT, 0);
+    gl.uniform1f(this.uIsEarth, 0.0);
+
+    for (let i = 0; i < 4; i++) {
+      if (!this.activeSats[i]) continue;
+      const satModelView = mat4.clone(this.viewMatrix);
+      mat4.translate(satModelView, satModelView, this.satPositions[i]);
+      gl.uniformMatrix4fv(this.uModelView, false, satModelView);
+      gl.uniform3fv(this.uColor, this.satColors[i]);
+      gl.drawElements(gl.TRIANGLES, this.numSatIndices, gl.UNSIGNED_SHORT, 0);
+    }
 
     // 3. Sun Billboard (The "Light Rays")
     const sunWorldPos = [sunWorld[0] * 40000, sunWorld[1] * 40000, sunWorld[2] * 40000];
@@ -499,20 +541,19 @@ export class WebGLContext implements IRenderContext {
     gl.enable(gl.DEPTH_TEST);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    // 4. Telemetry Trail
-    if (this.trailCount > 1) {
-      const identityMV = mat4.clone(this.viewMatrix);
-      gl.uniformMatrix4fv(this.uModelView, false, identityMV);
-      gl.uniform1f(this.uIsEarth, 0.0);
-      gl.uniform3f(this.uColor, 0.0, 0.8, 1.0); // Cyan trail
-      gl.bindVertexArray(this.trailVAO);
-      // Draw from head backwards for correct ordering
-      if (this.trailCount < 200) {
-        gl.drawArrays(gl.LINE_STRIP, 0, this.trailCount);
+    // 4. Telemetry Trails
+    gl.uniform1f(this.uIsEarth, 0.0);
+    for (let i = 0; i < 4; i++) {
+      if (!this.activeSats[i] || this.trailCounts[i] < 2) continue;
+
+      gl.uniform3fv(this.uColor, this.satColors[i]);
+      gl.bindVertexArray(this.trailVAOs[i]);
+      
+      if (this.trailCounts[i] < 200) {
+        gl.drawArrays(gl.LINE_STRIP, 0, this.trailCounts[i]);
       } else {
-        // Two segments: [head..199] and [0..head-1]
-        gl.drawArrays(gl.LINE_STRIP, this.trailHead, 200 - this.trailHead);
-        gl.drawArrays(gl.LINE_STRIP, 0, this.trailHead);
+        gl.drawArrays(gl.LINE_STRIP, this.trailHeads[i], 200 - this.trailHeads[i]);
+        gl.drawArrays(gl.LINE_STRIP, 0, this.trailHeads[i]);
       }
     }
 

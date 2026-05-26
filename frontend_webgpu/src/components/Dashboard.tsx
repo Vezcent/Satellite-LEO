@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useTelemetry, FdirMode } from '../lib/telemetry';
-import { Activity, Battery, ShieldAlert, Cpu, Radio, Orbit, ThermometerSun, Clock, Skull, Thermometer } from 'lucide-react';
+import type { TelemetryData } from '../lib/telemetry';
+import { Battery, ShieldAlert, Radio, Orbit, ThermometerSun, Skull, Database } from 'lucide-react';
 import Renderer from '../engine/Renderer';
 import GroundControlPanel from './GroundControlPanel';
 import MusicPlayer from './MusicPlayer';
@@ -24,7 +25,7 @@ function formatLifetime(totalSeconds: number): string {
 }
 
 // ── Circular Progress Ring for Fuel Gauge ────────────────────────
-function CircularProgress({ value, label, size = 80, strokeWidth = 6 }: { value: number; label: string; size?: number; strokeWidth?: number }) {
+function CircularProgress({ value, label, size = 56, strokeWidth = 4 }: { value: number; label: string; size?: number; strokeWidth?: number }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
   const offset = circumference - (value * circumference);
@@ -43,7 +44,7 @@ function CircularProgress({ value, label, size = 80, strokeWidth = 6 }: { value:
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
       <div style={{ position: 'relative', width: size, height: size }}>
         <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
           <circle
@@ -80,18 +81,18 @@ function CircularProgress({ value, label, size = 80, strokeWidth = 6 }: { value:
           fontFamily: "'JetBrains Mono', 'Fira Code', monospace"
         }}>
           {value === 0 ? (
-            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#EF4444', letterSpacing: '0.05em' }}>DEPLETED</span>
+            <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#EF4444', letterSpacing: '0.05em' }}>EMPTY</span>
           ) : (
             <>
-              <span style={{ fontSize: '1.0rem', fontWeight: 700, color: 'white' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'white' }}>
                 {(value * 100).toFixed(0)}
               </span>
-              <span style={{ fontSize: '0.55rem', color: 'var(--color-text-secondary)' }}>%</span>
+              <span style={{ fontSize: '0.5rem', color: 'var(--color-text-secondary)' }}>%</span>
             </>
           )}
         </div>
       </div>
-      <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+      <span style={{ fontSize: '0.55rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
         {label}
       </span>
     </div>
@@ -110,12 +111,12 @@ function TemperatureBar({ label, value, min = -40, max = 60, safeMin, safeMax }:
   const glowColor = isSafe ? 'rgba(16, 185, 129, 0.2)' : value < safeMin ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', width: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontFamily: 'monospace' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', width: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', fontFamily: 'monospace' }}>
         <span style={{ color: 'var(--color-text-secondary)' }}>{label}</span>
         <span style={{ color: isSafe ? 'white' : barColor, fontWeight: 600 }}>{value.toFixed(1)}°C</span>
       </div>
-      <div style={{ position: 'relative', height: '5px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+      <div style={{ position: 'relative', height: '4px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '2px', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute',
           left: `${safeLeft}%`,
@@ -129,7 +130,7 @@ function TemperatureBar({ label, value, min = -40, max = 60, safeMin, safeMax }:
           width: `${percentage}%`,
           height: '100%',
           background: barColor,
-          borderRadius: '3px',
+          borderRadius: '2px',
           boxShadow: `0 0 4px ${glowColor}`,
           transition: 'width 0.3s ease-in-out'
         }} />
@@ -138,27 +139,19 @@ function TemperatureBar({ label, value, min = -40, max = 60, safeMin, safeMax }:
   );
 }
 
-export default function Dashboard() {
-  const { data, connected, sendCommand } = useTelemetry();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const engineRef = useRef<Renderer | null>(null);
+const SAT_NAMES = ['ALPHA', 'BETA', 'GAMMA', 'DELTA'];
+const SAT_COLORS = ['#3B82F6', '#22C55E', '#F59E0B', '#A855F7'];
+const SAT_GLOWS = [
+  'rgba(59, 130, 246, 0.2)',
+  'rgba(34, 197, 94, 0.2)',
+  'rgba(245, 158, 11, 0.2)',
+  'rgba(168, 85, 247, 0.2)'
+];
 
-  useEffect(() => {
-    if (canvasRef.current && !engineRef.current) {
-      engineRef.current = new Renderer(canvasRef.current);
-      engineRef.current.init().catch(console.error);
-    }
-    return () => {
-      engineRef.current?.dispose();
-      engineRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (engineRef.current && data) {
-      engineRef.current.updateTelemetry(data);
-    }
-  }, [data]);
+function SatelliteCard({ satId, data }: { satId: number; data: TelemetryData | null }) {
+  const color = SAT_COLORS[satId];
+  const glow = SAT_GLOWS[satId];
+  const name = SAT_NAMES[satId];
 
   const getFdirColor = (mode?: FdirMode) => {
     switch (mode) {
@@ -180,170 +173,228 @@ export default function Dashboard() {
     }
   };
 
-  const fdirLabel = getFdirLabel(data?.fdirMode);
-  const isAlert = data?.fdirMode === FdirMode.Safe || data?.fdirMode === FdirMode.Degraded;
-  const isDead = data?.isDone === true;
-  const lifetime = data ? formatLifetime(data.simTimeS) : '---';
+  if (!data) {
+    return (
+      <div className="glass-panel sat-card" style={{ borderTop: `3px solid ${color}`, boxShadow: `0 8px 32px 0 rgba(0,0,0,0.3), 0 0 10px ${glow}` }}>
+        <div className="sat-card-header">
+          <h2 style={{ fontSize: '0.9rem', fontWeight: 700, color: color, letterSpacing: '0.05em' }}>
+            SAT-{satId} — {name}
+          </h2>
+          <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', fontFamily: 'monospace' }}>AWAITING UPLINK</span>
+        </div>
+        <div style={{ display: 'flex', flexGrow: 1, alignItems: 'center', justifyContent: 'center', minHeight: '120px' }}>
+          <div className="uplink-scanner" style={{ color }} />
+        </div>
+      </div>
+    );
+  }
+
+  const isDead = data.isDone;
+  const isAlert = data.fdirMode === FdirMode.Safe || data.fdirMode === FdirMode.Degraded;
+  const lifetime = formatLifetime(data.simTimeS);
+  const fdirLabel = getFdirLabel(data.fdirMode);
+
+  return (
+    <div className={`glass-panel sat-card ${isAlert ? 'pulse-alert' : ''}`}
+         style={{ 
+           borderTop: `3px solid ${isDead ? '#4B5563' : color}`,
+           boxShadow: isDead ? 'none' : `0 8px 32px 0 rgba(0,0,0,0.3), 0 0 10px ${glow}`
+         }}>
+      
+      {isDead && (
+        <div className="sat-dead-overlay">
+          <Skull size={24} style={{ color: '#EF4444', marginBottom: '0.5rem' }} />
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#EF4444', letterSpacing: '0.05em' }}>MISSION TERMINATED</span>
+          <span style={{ fontSize: '0.65rem', color: '#F87171', marginTop: '0.25rem', fontFamily: 'monospace' }}>
+            {data.doneReason === 1 ? 'BATTERY DEPLETED' : 
+             data.doneReason === 2 ? 'COMMS LOST >72h' : 
+             data.doneReason === 3 ? 'REENTRY <200km' : 
+             data.doneReason === 4 ? 'SEU FATAL (RADIATION)' : 
+             data.doneReason === 5 ? 'FUEL DEPLETED' : `CODE ${data.doneReason}`}
+          </span>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="sat-card-header">
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <h2 style={{ fontSize: '0.9rem', fontWeight: 700, color: isDead ? '#6b7280' : color, letterSpacing: '0.05em' }}>
+            SAT-{satId} — {name}
+          </h2>
+          <span style={{ fontSize: '0.6rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace' }}>
+            LIFETIME: {lifetime}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{
+            padding: '2px 6px',
+            borderRadius: '4px',
+            fontSize: '0.6rem',
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            backgroundColor: isDead ? 'rgba(75,85,99,0.2)' : `${getFdirColor(data.fdirMode)}22`,
+            color: isDead ? '#9ca3af' : getFdirColor(data.fdirMode),
+            border: `1px solid ${isDead ? '#4b5563' : getFdirColor(data.fdirMode)}33`
+          }}>
+            {isDead ? 'DECEASED' : fdirLabel}
+          </span>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="sat-card-body" style={{ opacity: isDead ? 0.25 : 1 }}>
+        
+        {/* Left Column: Core Stats */}
+        <div className="sat-card-left">
+          <div className="stat-row" style={{ paddingBottom: '0.2rem' }}>
+            <div className="stat-label" style={{ fontSize: '0.7rem' }}><Orbit size={13} /> Alt</div>
+            <div className="stat-value" style={{ fontSize: '0.9rem' }}>{data.altitudeKm.toFixed(1)} km</div>
+          </div>
+          <div className="stat-row" style={{ paddingBottom: '0.2rem' }}>
+            <div className="stat-label" style={{ fontSize: '0.7rem' }}><Battery size={13} /> SoC</div>
+            <div className="stat-value" style={{ fontSize: '0.9rem', color: data.batterySoc < 0.2 ? 'var(--color-safe)' : 'white' }}>
+              {(data.batterySoc * 100).toFixed(1)}%
+            </div>
+          </div>
+          <div className="stat-row" style={{ paddingBottom: '0.2rem' }}>
+            <div className="stat-label" style={{ fontSize: '0.7rem' }}><Database size={13} /> Buffer</div>
+            <div className="stat-value" style={{ fontSize: '0.9rem' }}>
+              {data.dataBufferMb !== undefined ? `${data.dataBufferMb.toFixed(1)} MB` : '0.0 MB'}
+            </div>
+          </div>
+          <div className="stat-row" style={{ paddingBottom: '0.2rem' }}>
+            <div className="stat-label" style={{ fontSize: '0.7rem' }}><Radio size={13} /> SNR</div>
+            <div className="stat-value" style={{ fontSize: '0.9rem', color: data.gsVisible ? '#34D399' : 'var(--color-text-muted)' }}>
+              {data.snrDb !== undefined && data.snrDb > -900 ? `${data.snrDb.toFixed(1)} dB` : 'LOS'}
+            </div>
+          </div>
+        </div>
+
+        {/* Middle Column: Propellant & Env */}
+        <div className="sat-card-middle">
+          <CircularProgress value={data.fuelFraction} label="Fuel" size={56} strokeWidth={4} />
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
+            <span title={data.inEclipse ? 'Eclipse' : 'Sunlight'}><ThermometerSun size={14} style={{ color: data.inEclipse ? 'var(--color-text-muted)' : '#FACC15' }} /></span>
+            <span title={data.gsVisible ? 'Ground Station Contact' : 'LOS'}><Radio size={14} style={{ color: data.gsVisible ? '#34D399' : 'var(--color-text-muted)' }} /></span>
+            {data.seuActive && <span title="SEU Detected"><ShieldAlert size={14} style={{ color: '#EF4444' }} /></span>}
+          </div>
+        </div>
+
+        {/* Right Column: Thermal & Actions */}
+        <div className="sat-card-right">
+          {/* Thermal */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.6rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', fontWeight: 600 }}>THERMAL</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%',
+                backgroundColor: data.heaterOn ? '#22C55E' : '#4B5563',
+                boxShadow: data.heaterOn ? '0 0 4px #22C55E' : 'none',
+                display: 'inline-block'
+              }} />
+              <span style={{ fontSize: '0.5rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace' }}>HTR</span>
+            </div>
+          </div>
+          <TemperatureBar label="Bus" value={data.tempBus} safeMin={-20} safeMax={50} />
+          <TemperatureBar label="Bat" value={data.tempBattery} safeMin={-10} safeMax={45} />
+          
+          {/* Actions */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.25rem', marginTop: '0.2rem' }}>
+            <div style={{ background: 'rgba(0,0,0,0.2)', padding: '2px 4px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.03)', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '0.45rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Thrust</span>
+              <span style={{ fontSize: '0.65rem', fontFamily: 'monospace', fontWeight: 700 }}>{data.throttle.toFixed(2)}</span>
+            </div>
+            <div style={{ background: 'rgba(0,0,0,0.2)', padding: '2px 4px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.03)', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: '0.45rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Payload</span>
+              <span style={{ fontSize: '0.65rem', fontFamily: 'monospace', fontWeight: 700, color: data.payloadOn ? '#34D399' : 'var(--color-text-muted)' }}>
+                {data.payloadOn ? 'ON' : 'OFF'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const { satellites, connected, sendCommand } = useTelemetry();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const engineRef = useRef<Renderer | null>(null);
+
+  useEffect(() => {
+    if (canvasRef.current && !engineRef.current) {
+      engineRef.current = new Renderer(canvasRef.current);
+      engineRef.current.init().catch(console.error);
+    }
+    return () => {
+      engineRef.current?.dispose();
+      engineRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (engineRef.current) {
+      satellites.forEach(sat => {
+        if (sat) {
+          engineRef.current?.updateTelemetry(sat);
+        }
+      });
+    }
+  }, [satellites]);
+
+  const activeCount = satellites.filter(s => s !== null && !s.isDone).length;
+  const firstActiveSat = satellites.find(s => s !== null);
+  const lifetime = firstActiveSat ? formatLifetime(firstActiveSat.simTimeS) : '---';
 
   return (
     <>
       <canvas ref={canvasRef} id="canvas-container" />
 
-      <div className="hud-overlay">
+      <div className="hud-overlay" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
 
         {/* ── Top Bar ── */}
-        <div className="hud-header">
-          {/* Left: Title + Connection */}
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-            <div className="glass-panel" style={{ padding: '1rem 1.25rem', minWidth: '16rem' }}>
-              <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '0.1em', marginBottom: '0.25rem' }} className="text-gradient">
-                S-MAS OPS
+        <div className="hud-header" style={{ width: '100%', pointerEvents: 'none' }}>
+          <div className="glass-panel" style={{ padding: '0.6rem 1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pointerEvents: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+              <h1 style={{ fontSize: '1.1rem', fontWeight: 700, letterSpacing: '0.1em' }} className="text-gradient">
+                S-MAS OPS CONSTELLATION
               </h1>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace' }}>
                 <span style={{
-                  width: 8, height: 8, borderRadius: '50%',
+                  width: 6, height: 6, borderRadius: '50%',
                   backgroundColor: connected ? '#22C55E' : '#EF4444',
                   display: 'inline-block'
                 }} />
-                {connected ? 'LIVE TELEMETRY' : 'DISCONNECTED'}
+                {connected ? 'LIVE NETWORK' : 'DISCONNECTED'}
               </div>
             </div>
-
-            {/* Lifetime Counter */}
-            <div className="glass-panel" style={{
-              padding: '1rem 1.25rem',
-              minWidth: '14rem',
-              borderColor: isDead ? 'var(--color-safe)' : 'rgba(59, 130, 246, 0.3)'
-            }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', marginBottom: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                {isDead ? <Skull size={12} style={{ color: '#EF4444' }} /> : <Clock size={12} />}
-                {isDead ? 'SATELLITE DECEASED' : 'MISSION LIFETIME'}
-              </div>
-              <div style={{
-                fontSize: '1.5rem', fontWeight: 700, fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                letterSpacing: '0.05em',
-                color: isDead ? '#EF4444' : '#60A5FA',
-              }}>
-                {lifetime}
-              </div>
-              {isDead && data && (
-                <div style={{ fontSize: '0.7rem', color: '#F87171', marginTop: '0.2rem' }}>
-                  Cause: {data.doneReason === 1 ? 'BATTERY DEPLETED' : data.doneReason === 2 ? 'COMMS LOST >72h' : data.doneReason === 3 ? 'REENTRY <200km' : data.doneReason === 4 ? 'SEU FATAL (RADIATION)' : data.doneReason === 5 ? 'FUEL DEPLETED' : `CODE ${data.doneReason}`}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right: System State */}
-          <div className={`glass-panel ${isAlert ? 'pulse-alert' : ''}`}
-            style={{
-              padding: '1rem 1.25rem',
-              display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
-              borderColor: getFdirColor(data?.fdirMode),
-              maxWidth: '14rem'
-            }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', marginBottom: '0.25rem' }}>
-              SYSTEM STATE
-            </div>
-            <div style={{
-              fontSize: '1.75rem', fontWeight: 700, letterSpacing: '0.15em',
-              color: getFdirColor(data?.fdirMode)
-            }}>
-              {fdirLabel}
-            </div>
-            {data?.seuActive && (
-              <div style={{ fontSize: '0.7rem', color: '#F87171', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <ShieldAlert size={12} /> SEU DETECTED
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Bottom Stats ── */}
-        <div className="hud-bottom" style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', width: '100%' }}>
-
-          {/* Main Stats Panel */}
-          <div className="glass-panel" style={{ padding: '1.25rem', width: '18rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <div className="stat-row">
-              <div className="stat-label"><Orbit size={18} /> Altitude</div>
-              <div className="stat-value">{data ? data.altitudeKm.toFixed(1) : '---'} km</div>
-            </div>
-            <div className="stat-row">
-              <div className="stat-label"><Battery size={18} /> SoC</div>
-              <div className="stat-value" style={{ color: data && data.batterySoc < 0.2 ? 'var(--color-safe)' : 'white' }}>
-                {data ? (data.batterySoc * 100).toFixed(1) : '---'}%
-              </div>
-            </div>
-            <div className="stat-row">
-              <div className="stat-label"><Activity size={18} /> Velocity</div>
-              <div className="stat-value" style={{ fontSize: '1.10rem' }}>
-                7.60 km/s
-              </div>
-            </div>
-          </div>
-
-          {/* Propellant Panel (Fuel Gauge) */}
-          <div className="glass-panel" style={{ padding: '1.25rem', width: '10rem', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <CircularProgress value={data ? data.fuelFraction : 1.0} label="PROPELLANT" />
-          </div>
-
-          {/* Thermal Panel */}
-          <div className="glass-panel" style={{ padding: '1.25rem', width: '17rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-              <h3 style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Thermometer size={15} /> THERMAL
-              </h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <span style={{
-                  width: 7, height: 7, borderRadius: '50%',
-                  backgroundColor: data?.heaterOn ? '#22C55E' : '#4B5563',
-                  boxShadow: data?.heaterOn ? '0 0 6px #22C55E' : 'none',
-                  display: 'inline-block'
-                }} />
-                <span style={{ fontSize: '0.6rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace' }}>HEATER</span>
-              </div>
-            </div>
-            <TemperatureBar label="Bus Temp" value={data ? data.tempBus : 20} safeMin={-20} safeMax={50} />
-            <TemperatureBar label="Battery Temp" value={data ? data.tempBattery : 15} safeMin={-10} safeMax={45} />
-            <TemperatureBar label="Payload Temp" value={data ? data.tempPayload : 10} safeMin={-15} safeMax={40} />
-          </div>
-
-          {/* AI / Action Panel */}
-          <div className="glass-panel" style={{ padding: '1.25rem', flex: '1', minWidth: '20rem', maxWidth: '26rem' }}>
-            <h3 style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <Cpu size={16} /> AGENT ACTIONS
-            </h3>
-            <div className="action-grid">
-              <div className="action-cell">
-                <span className="label">Thrust Mag</span>
-                <span className="value">{data ? data.throttle.toFixed(2) : '0.00'}</span>
-              </div>
-              <div className="action-cell">
-                <span className="label">Payload</span>
-                <span className="value" style={{ color: data?.payloadOn ? '#34D399' : 'var(--color-text-muted)' }}>
-                  {data?.payloadOn ? 'ACTIVE' : 'STANDBY'}
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+              <div>
+                <span style={{ color: 'var(--color-text-secondary)' }}>ACTIVE SATELLITES: </span>
+                <span style={{ color: activeCount > 0 ? '#34D399' : '#EF4444', fontWeight: 700 }}>
+                  {activeCount} / 4
                 </span>
               </div>
-              <div className="action-cell">
-                <span className="label">Power Draw</span>
-                <span className="value">{data ? data.powerDrawW.toFixed(0) : '0'} W</span>
+              <div>
+                <span style={{ color: 'var(--color-text-secondary)' }}>MISSION TIME: </span>
+                <span style={{ color: '#60A5FA', fontWeight: 700 }}>
+                  {lifetime}
+                </span>
               </div>
             </div>
           </div>
-
-          {/* Environment Panel */}
-          <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', justifyContent: 'center' }}>
-            <div className="env-row">
-              <ThermometerSun size={20} style={{ color: data?.inEclipse ? 'var(--color-text-muted)' : '#FACC15' }} />
-              <span>{data?.inEclipse ? 'ECLIPSE' : 'SUNLIGHT'}</span>
-            </div>
-            <div className="env-row">
-              <Radio size={20} style={{ color: data?.gsVisible ? '#34D399' : 'var(--color-text-muted)' }} />
-              <span>{data?.gsVisible ? 'COMMS UP' : 'LOS'}</span>
-            </div>
-          </div>
-
         </div>
+
+        {/* ── 2x2 Grid Layout for Satellites ── */}
+        <div className="constellation-grid" style={{ pointerEvents: 'auto' }}>
+          {[0, 1, 2, 3].map(id => (
+            <SatelliteCard key={id} satId={id} data={satellites[id]} />
+          ))}
+        </div>
+
       </div>
       <GroundControlPanel sendCommand={sendCommand} connected={connected} />
       <MusicPlayer />
