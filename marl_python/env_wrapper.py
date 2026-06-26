@@ -360,7 +360,12 @@ class VectorSatelliteEnv:
     def __init__(self, cfg: EnvConfig):
         self.cfg = cfg
         self.num_envs = cfg.num_envs
-        self.envs = [SatelliteEnv(cfg) for _ in range(self.num_envs)]
+        import copy
+        self.envs = []
+        for i in range(self.num_envs):
+            env_cfg = copy.deepcopy(cfg)
+            env_cfg.seed = cfg.seed + i
+            self.envs.append(SatelliteEnv(env_cfg))
         from concurrent.futures import ThreadPoolExecutor
         self.executor = ThreadPoolExecutor(max_workers=self.num_envs)
 

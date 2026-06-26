@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import argparse
+import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -269,10 +270,37 @@ def train(train_cfg: TrainConfig,
                      f"SAA! {ep_saa_violations:2d}")
         print(base)
 
+        # JSONL logging
+        if train_cfg.log_dir:
+            os.makedirs(train_cfg.log_dir, exist_ok=True)
+            suffix = getattr(train_cfg, "log_suffix", f"_seed{train_cfg.seed}")
+            log_path = os.path.join(train_cfg.log_dir, f"train_log_phase{phase}{suffix}.jsonl")
+            log_entry = {
+                "episode": episode_count,
+                "phase": phase,
+                "steps": episode_steps,
+                "total_steps": total_steps,
+                "reward": float(episode_reward),
+                "soc_final": float(vec_env.envs[0].state.battery_soc * 100),
+                "alt_final": float(vec_env.envs[0].state.altitude_km),
+                "fdir": int(vec_env.envs[0].state.fdir_mode),
+                "done_reason": int(vec_env.envs[0].state.done_reason),
+                "policy_loss": float(avg_pi),
+                "value_loss": float(avg_v),
+                "entropy": float(avg_ent),
+                "sps": float(sps),
+                "time_s": float(ep_time),
+                "payload_on_steps": int(ep_payload_on_count),
+                "valid_targets": int(ep_valid_targets),
+                "saa_violations": int(ep_saa_violations)
+            }
+            with open(log_path, "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+
         # Save
         if episode_count % 1 == 0 or total_steps >= train_cfg.total_timesteps:
-            os.makedirs("checkpoints", exist_ok=True)
-            path = f"checkpoints/mappo_phase{phase}_ep{episode_count}.pt"
+            os.makedirs(train_cfg.checkpoint_dir, exist_ok=True)
+            path = os.path.join(train_cfg.checkpoint_dir, f"mappo_phase{phase}_ep{episode_count}.pt")
             torch.save({
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),

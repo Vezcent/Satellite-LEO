@@ -1,0 +1,81 @@
+Baselines so sánh
+Blocker
+
+Không có baseline = reviewer reject không cần đọc thêm. Framework hiện tại đã có đủ infrastructure — chỉ cần swap policy.
+Rule-based heuristic: thrust khi
+altitude < target - 5km
+, sleep khi
+SoC < 20%
+, payload on khi
+gs_visible AND NOT in_saa
+. Viết trong Python, ~100 LOC.
+IPPO baseline: copy
+mappo.py
+, bỏ centralized critic, train 3 agent độc lập. Tận dụng lại toàn bộ env_wrapper và reward.
+No-op / passive baseline: đã có sẵn trong monte_carlo.py — chỉ cần chạy với 30+ seeds và report lifetime distribution.
+Chạy mỗi baseline với 30 seeds, report mean ± std lifetime. So sánh với MAPPO cùng điều kiện.
+Metric cần report: mean survival time, median, min/max, % episodes survived > 5 years, mean final SoC
+
+
+Learning curve và training analysis
+High
+
+Hiện tại chỉ có "ep37, reward 2,575,816" — không đủ để claim convergence. Cần show agent thực sự học được gì.
+Plot episode reward vs training steps (smooth với rolling average 10 ep). Đây là Figure 1 tiêu chuẩn của mọi RL paper.
+Plot survival time per episode trong training — show agent học sống lâu hơn theo thời gian.
+Plot fuel usage per episode — verify "coast-first strategy" mà report mention là artifact của training hay intentional.
+Multi-seed training: chạy thêm 2-3 seeds khác, overlay learning curve để show stability. Không cần retrain lâu — 3-5M steps là đủ để compare early learning.
+
+
+Ablation của reward components
+High
+
+16-component reward là điểm novel — nhưng không có ablation thì reviewer hỏi "tại sao cần nhiều component thế?" Có thể khai thác từ version history.
+Khai thác version diff: v1.0 (9 components) vs v1.4 (16 components) là ablation tự nhiên — document lại survival difference.
+Ablation 3 component quan trọng nhất:
+w_fdir
+(200.0),
+w_fatal
+(50,000.0),
+w_dod
+(50.0). Train lần lượt không có mỗi cái, report impact.
+Không cần full 16-way ablation — 3-4 targeted experiments là đủ để defend design choices
+
+Quantified evaluation metrics
+High
+
+Monte Carlo đã chạy 100 seeds — nhưng report chỉ show "satellite SURVIVES all episodes". Cần extract distribution thực sự.
+Từ
+monte_carlo.py
+: extract lifetime distribution histogram, survival rate at 1yr/3yr/5yr/10yr thresholds.
+Report mean ± std cho: survival time, final SoC, final altitude, fuel remaining, panel efficiency tại EOL.
+Worst-case 6 scenarios: report survival rate per scenario (not just "confirmed robust").
+So sánh MAPPO vs baselines trên cùng 30-seed set — đây là Table 1 của paper
+
+Related work và positioning
+Medium
+
+References hiện tại toàn là physics/engineering — không có MARL paper nào. Cần 6-8 paper để position contribution.
+Search: "multi-agent reinforcement learning satellite", "autonomous spacecraft MARL", "LEO lifetime optimization RL" — tìm 3-4 paper gần nhất để compare.
+Search: "MAPPO cooperative MARL" — cite Yu et al. 2022 (đã có trong refs) và explain tại sao MAPPO fit bài toán này hơn MADDPG hay QMIX.
+Framing rõ contribution: (1) high-fidelity sim validated against real TLE, (2) EFC battery model, (3) iterative failure analysis methodology — đây là 3 thứ paper khác không có.
+
+Scope claim rõ ràng
+Medium
+
+Report tự list "cooperative constellation not implemented" nhưng title claim "constellation". Cần align title với scope thực.
+Title nên reflect thực tế: "autonomous lifetime optimization" thay vì "constellation management".
+Limitations section phải explicit về 4 independent agents vs true cooperative — reviewer sẽ check.
+7-9x severity claim cần một paragraph defend tại sao đây là valid training domain dù harsher than real.
+
+Figures và visualization cho paper
+Polish
+
+Codebase đã có visualize.py — phần lớn là reformat cho publication quality.
+Fig 1: System architecture diagram (4-layer pipeline C++ → Python → C# → WebGPU).
+Fig 2: Learning curve (reward + survival time vs training steps).
+Fig 3: Baseline comparison bar chart (mean lifetime ± std, 4 methods).
+Fig 4: Lifetime progression v1.0 → v6.0 (bar chart, 9 runs từ Section 12.5).
+Fig 5: EFC validation — cycles vs time, capacity degradation curve.
+Table 1: Quantitative comparison MAPPO vs baselines trên 30 seeds.
+Table 2: Worst-case scenario survival rates.
